@@ -488,6 +488,60 @@ printf 'mutated by filter\n'
     expect(status.error).toMatch(/not a git repository/i)
   })
 
+  it('returns commits, decorations, and branches for the graph', async () => {
+    const cwd = repository('prime-work-git-history-')
+    git(cwd, 'branch', 'feature/side')
+    git(cwd, 'tag', 'v1.0')
+    writeFileSync(join(cwd, 'second.txt'), 'second\n')
+    git(cwd, 'add', 'second.txt')
+    git(cwd, 'commit', '-qm', 'second commit')
+    const service = new GitService(async () => cwd)
+
+    const history = await service.history(cwd)
+    expect(history.truncated).toBe(false)
+    expect(history.commits).toHaveLength(2)
+    const [tip, base] = history.commits
+    expect(tip!.subject).toBe('second commit')
+    expect(tip!.author).toBe('Prime Work Test')
+    expect(tip!.parents).toEqual([base!.sha])
+    expect(tip!.head).toBe(true)
+    expect(base!.refs.map((ref) => ref.name)).toEqual(expect.arrayContaining(['feature/side', 'v1.0']))
+    expect(base!.refs.find((ref) => ref.name === 'v1.0')?.kind).toBe('tag')
+    const current = history.branches.find((branch) => branch.current)
+    expect(current?.name).toBe(spawnSync('git', ['branch', '--show-current'], { cwd, encoding: 'utf8' }).stdout.trim())
+    expect(current?.sha).toBe(tip!.sha)
+    expect(history.branches.find((branch) => branch.name === 'feature/side')?.sha).toBe(base!.sha)
+  })
+
+  it('returns an empty commit list for an unborn HEAD', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-unborn-')); dirs.push(cwd)
+    git(cwd, 'init', '-q')
+    const service = new GitService(async () => cwd)
+    const history = await service.history(cwd)
+    expect(history.commits).toEqual([])
+    expect(history.truncated).toBe(false)
+  })
+
+  it('reports commit detail with message and per-file stats', async () => {
+    const cwd = repository('prime-work-git-detail-')
+    writeFileSync(join(cwd, 'file.txt'), 'base\nmore\n')
+    writeFileSync(join(cwd, 'added.txt'), 'new\n')
+    git(cwd, 'add', '.')
+    git(cwd, 'commit', '-qm', 'detail subject', '-m', 'detail body')
+    const service = new GitService(async () => cwd)
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+
+    const detail = await service.commitDetail(cwd, sha)
+    expect(detail.sha).toBe(sha)
+    expect(detail.body).toBe('detail subject\n\ndetail body')
+    expect(detail.files).toEqual(expect.arrayContaining([
+      { path: 'added.txt', additions: 1, deletions: 0 },
+      { path: 'file.txt', additions: 1, deletions: 0 },
+    ]))
+    await expect(service.commitDetail(cwd, 'not-a-sha')).rejects.toThrow(/hexadecimal/)
+    await expect(service.commitDetail(cwd, 'f'.repeat(40))).rejects.toThrow(/Git commit inspection/)
+  })
+
   it('keeps isRepo true when status fails for a reason other than a missing repository', async () => {
     const cwd = repository('prime-work-git-authz-')
     const service = new GitService(async () => { throw new TypeError('path is not inside an added Prime Work project') })

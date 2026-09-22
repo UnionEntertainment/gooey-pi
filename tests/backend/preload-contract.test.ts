@@ -70,6 +70,8 @@ const INVOKE_CASES: Array<[domain: string, method: string, channel: string, args
   ['git', 'unstage', 'git:unstage', ['/repo', ['file.ts']]],
   ['git', 'restore', 'git:restore', ['/repo', ['file.ts']]],
   ['git', 'commit', 'git:commit', ['/repo', 'message']],
+  ['git', 'history', 'git:history', ['/repo']],
+  ['git', 'commitDetail', 'git:commit-detail', ['/repo', 'abc1234']],
   ['plugins', 'list', 'plugins:list', ['/repo', 'omp']],
   ['plugins', 'install', 'plugins:install', ['npm:example', 'omp']],
   ['plugins', 'installExtension', 'plugins:install-extension', [{ source: '/extension.ts', scope: 'user' }, 'omp']],

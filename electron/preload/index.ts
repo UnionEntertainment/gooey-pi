@@ -119,6 +119,8 @@ const api: PrimeWorkApi = {
     unstage: (cwd, paths) => invoke('git:unstage', cwd, paths),
     restore: (cwd, paths) => invoke('git:restore', cwd, paths),
     commit: (cwd, message) => invoke('git:commit', cwd, message),
+    history: (cwd) => invoke('git:history', cwd),
+    commitDetail: (cwd, sha) => invoke('git:commit-detail', cwd, sha),
   },
   plugins: {
     list: (projectPath, harness) => invoke('plugins:list', projectPath, harness),

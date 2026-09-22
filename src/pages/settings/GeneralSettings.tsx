@@ -37,6 +37,7 @@ export function GeneralSettings({ settings, onUpdate, platform }: SettingsSectio
             <option value="summary">Summary</option>
             <option value="changes">Changes</option>
             <option value="browser">Browser</option>
+            <option value="git">Git</option>
             <option value="files">Files</option>
           </select>
         </label>

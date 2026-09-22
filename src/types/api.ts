@@ -7,7 +7,7 @@ export const BROWSER_PARTITION = 'persist:prime-work-browser'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type WorkspaceView = 'session' | 'projects' | 'activity' | 'scheduled' | 'plugins' | 'settings'
-export type InspectorTab = 'summary' | 'changes' | 'browser' | 'files'
+export type InspectorTab = 'summary' | 'changes' | 'browser' | 'files' | 'git'
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'complete' | 'failed' | 'unknown'
 
 export const HARNESS_IDS = ['omp', 'prime', 'pi'] as const
@@ -414,6 +414,42 @@ export interface GitStatus {
   error?: string
 }
 export interface GitDiff { path?: string; staged: boolean; text: string; truncated: boolean; error?: string }
+export interface GitCommitRef { name: string; kind: 'local' | 'remote' | 'tag'; head?: boolean }
+export interface GitCommitInfo {
+  sha: string
+  parents: string[]
+  author: string
+  email: string
+  timestamp: number
+  subject: string
+  refs: GitCommitRef[]
+  head?: boolean
+}
+export interface GitHistoryBranch {
+  name: string
+  sha: string
+  remote: boolean
+  current: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+}
+export interface GitHistory {
+  commits: GitCommitInfo[]
+  branches: GitHistoryBranch[]
+  truncated: boolean
+}
+export interface GitCommitFile { path: string; additions: number; deletions: number }
+export interface GitCommitDetail {
+  sha: string
+  parents: string[]
+  author: string
+  email: string
+  timestamp: number
+  body: string
+  files: GitCommitFile[]
+  truncated: boolean
+}
 
 /**
  * The one result shape for subprocess-backed operations (git commit, package
@@ -824,7 +860,7 @@ export interface PrimeWorkApi {
     onData(callback: (event: TerminalDataEvent) => void): () => void
     onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
-  git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
+  git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome>; history(cwd: string): Promise<GitHistory>; commitDetail(cwd: string, sha: string): Promise<GitCommitDetail> }
   plugins: {
     list(projectPath?: string, harness?: HarnessId): Promise<PluginCatalog>
     install(source: string, harness?: HarnessId): Promise<ProcessOutcome>

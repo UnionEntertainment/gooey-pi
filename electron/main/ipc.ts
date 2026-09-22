@@ -395,6 +395,8 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('git:unstage', (_event, cwd, paths) => services.git.unstage(cwd, paths))
   handle('git:restore', (_event, cwd, paths) => services.git.restore(cwd, paths))
   handle('git:commit', (_event, cwd, message) => services.git.commit(cwd, message))
+  handle('git:history', (_event, cwd) => services.git.history(cwd))
+  handle('git:commit-detail', (_event, cwd, sha) => services.git.commitDetail(cwd, sha))
 
   handle('plugins:list', (_event, projectPath, harness) => pluginsFor(requireHarness(harness)).list(projectPath))
   handle('plugins:install', (_event, source, harness) => pluginsFor(requireHarness(harness)).install(source))

@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import type { GitDiff, GitFileChange, GitStatus, GitWorktree, LocalGitBranch, ProcessOutcome } from '../../src/types/api'
+import type { GitCommitDetail, GitDiff, GitFileChange, GitHistory, GitStatus, GitWorktree, LocalGitBranch, ProcessOutcome } from '../../src/types/api'
+import { parseCommitDetail, parseHistoryLog, parseRefList } from './git-history'
 import { restrictedGitEnvironment, runProcess, type ProcessResult } from './process-utils'
 import { errorMessage, requireGitPath, requireString, stripAnsi } from './validation'
 
@@ -18,6 +19,9 @@ const GIT_WORKTREE_OUTPUT_LIMIT = 1024 * 1024
 const GIT_WORKTREE_LIMIT = 1_000
 const GIT_BRANCH_OUTPUT_LIMIT = 1024 * 1024
 const GIT_BRANCH_LIMIT = 1_000
+const GIT_HISTORY_COMMIT_LIMIT = 500
+const GIT_HISTORY_OUTPUT_LIMIT = 4 * 1024 * 1024
+const GIT_COMMIT_FILE_LIMIT = 500
 const EMPTY_CONFIG_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const BASE_GIT_CONFIG = [
   'core.fsmonitor=false',
@@ -668,6 +672,38 @@ export class GitService {
     const output = stripAnsi(`${result.stdout}${result.stderr}`).trim()
     if (result.code !== 0) return { ok: false, reason: 'exit', output: output || processError('Git commit', result).message }
     return { ok: true, output: output || 'Commit created.' }
+  }
+
+  /**
+   * Commit graph + ref list for the Git inspector tab. Read-only: uses the
+   * read-only authorizer like `status`. An unborn HEAD yields an empty commit
+   * list rather than an error so the panel can still show branches.
+   */
+  async history(cwdValue: unknown): Promise<GitHistory> {
+    const { cwd } = await this.withRepositoryGuards(cwdValue, undefined, { readOnly: true })
+    const logResult = await runGit(cwd, ['log', '--all', '--topo-order', '--date-order', `-n${GIT_HISTORY_COMMIT_LIMIT + 1}`, '-z', '--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s%x00'], { timeoutMs: 15_000, maxBytes: GIT_HISTORY_OUTPUT_LIMIT })
+    let commits: GitHistory['commits'] = []
+    let truncated = false
+    if (logResult.code === 0 && !logResult.timedOut && !logResult.outputExceeded) {
+      const parsed = parseHistoryLog(logResult.stdout, GIT_HISTORY_COMMIT_LIMIT)
+      commits = parsed.commits
+      truncated = parsed.truncated
+    } else if (!/does not have any commits yet|bad default revision|ambiguous argument.*HEAD/i.test(resultDetail(logResult))) {
+      requireProcessSuccess('Git history', logResult)
+    }
+    const refResult = await runGit(cwd, ['for-each-ref', '--format=%(refname)%00%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)%00%(upstream:track)%00%(symref)%00', '--sort=refname', 'refs/heads', 'refs/remotes'], { timeoutMs: 10_000, maxBytes: GIT_BRANCH_OUTPUT_LIMIT })
+    requireProcessSuccess('Git branch list', refResult)
+    return { commits, branches: parseRefList(refResult.stdout, GIT_BRANCH_LIMIT), truncated }
+  }
+
+  /** Full message and changed-file stats for one commit in the graph. */
+  async commitDetail(cwdValue: unknown, shaValue: unknown): Promise<GitCommitDetail> {
+    const sha = requireString(shaValue, 'commit', { min: 4, max: 64, trim: true })
+    if (!/^[0-9a-fA-F]+$/.test(sha)) throw new TypeError('commit must be a hexadecimal object id')
+    const { cwd } = await this.withRepositoryGuards(cwdValue, undefined, { readOnly: true })
+    const result = await runGit(cwd, ['show', '--no-ext-diff', '--no-textconv', '--no-color', '--numstat', '-z', '--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%B%x00', sha], { timeoutMs: 15_000, maxBytes: GIT_HISTORY_OUTPUT_LIMIT })
+    requireProcessSuccess('Git commit inspection', result)
+    return parseCommitDetail(result.stdout, GIT_COMMIT_FILE_LIMIT)
   }
 
   private async repositoryCwd(
