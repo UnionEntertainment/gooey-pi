@@ -29,9 +29,9 @@ import { appendSessionRouting, findSessionMentions } from '@/lib/session-mention
 import { clearComposerDraft, readComposerDraft, saveComposerDraft, takeComposerDraft } from '@/lib/composer-draft'
 import { contextDialLabel } from '@/lib/format-cost'
 import { messageActionForKey } from '@/lib/message-shortcuts'
-import { useComposerImages } from '@/hooks/useComposerImages'
+import { useComposerImages, type ComposerImage } from '@/hooks/useComposerImages'
 import { useDictation } from '@/hooks/useDictation'
-import { IconButton, SelectControl } from './ui'
+import { IconButton, ImageLightbox, SelectControl } from './ui'
 import { ExecutingModelChip, type ExecutingModelChipProps } from './ExecutingModelChip'
 import { ModelPicker } from './ModelPicker'
 import { CheckoutPicker } from './CheckoutPicker'
@@ -177,6 +177,7 @@ export const Composer = memo(function Composer({
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
   const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
+  const [previewImage, setPreviewImage] = useState<ComposerImage | null>(null)
   const imageAttachments = useComposerImages({ shortName })
   const { images, imagesRef, unsupportedFiles, unsupportedFilesRef, error: attachmentError, setError: setAttachmentError, processing: processingImages } = imageAttachments
   const dictation = useDictation(voice, transcriptionProvider, setAttachmentError)
@@ -316,6 +317,7 @@ export const Composer = memo(function Composer({
     const submittedValue = draftValue
     const submittedComposerImages = currentImages
     setValue('')
+    setPreviewImage(null)
     imageAttachments.clear()
     setAttachmentError('')
     setMenu(null)
@@ -639,7 +641,15 @@ export const Composer = memo(function Composer({
             ) : null}
             {images.map((image) => (
               <div className="composer-attachment" key={image.id}>
-                <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
+                <button
+                  type="button"
+                  className="composer-attachment__preview"
+                  aria-label={`Preview ${image.name}`}
+                  title={image.name}
+                  onClick={() => setPreviewImage(image)}
+                >
+                  <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
+                </button>
                 <span>
                   <ImageIcon size={12} />
                   {image.name}
@@ -776,6 +786,14 @@ export const Composer = memo(function Composer({
         </div>
       </div>
       <p className="composer-note">{shortName} can make mistakes. Review commands and changes before committing.</p>
+      {previewImage ? (
+        <ImageLightbox
+          source={`data:${previewImage.mimeType};base64,${previewImage.data}`}
+          alt={previewImage.name}
+          title={`Preview of ${previewImage.name}`}
+          onClose={() => setPreviewImage(null)}
+        />
+      ) : null}
     </div>
   )
 })

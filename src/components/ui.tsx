@@ -143,6 +143,28 @@ export function useAppShellOverlay(active: boolean): void {
   }, [active])
 }
 
+export function ImageLightbox({ source, alt, title, onClose }: { source: string; alt: string; title: string; onClose(): void }) {
+  const titleId = useId()
+  const lightboxRef = useFocusTrap<HTMLElement>(true, onClose)
+  useAppShellOverlay(true)
+  return createPortal(
+    <div className="image-lightbox" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <section ref={lightboxRef} className="image-lightbox__panel" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}>
+        <h2 id={titleId} className="sr-only">{title}</h2>
+        <button type="button" className="image-lightbox__close" aria-label="Close image preview" onClick={onClose}>
+          <X size={18} />
+        </button>
+        <img className="image-lightbox__image" src={source} alt={alt} />
+      </section>
+    </div>,
+    document.body,
+  )
+}
+
 export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
   const titleId = useId()
   const modalRef = useFocusTrap<HTMLElement>(true, onClose)

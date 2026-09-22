@@ -30,6 +30,58 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
+const DOWNSCALE_RATIOS = [1, 0.75, 0.5, 0.35, 0.25]
+const DOWNSCALE_QUALITIES = [0.85, 0.7, 0.55]
+
+async function renderScaledBlob(
+  bitmap: ImageBitmap,
+  ratio: number,
+  mimeType: 'image/webp' | 'image/jpeg',
+  quality: number,
+): Promise<Blob | null> {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * ratio))
+  canvas.height = Math.max(1, Math.round(bitmap.height * ratio))
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  // JPEG has no alpha channel; transparent pixels need a matte or they turn black.
+  if (mimeType === 'image/jpeg') {
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  return new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality))
+}
+
+async function downscaleImage(
+  file: File,
+  maxBytes: number,
+): Promise<{ data: string; size: number; mimeType: 'image/webp' | 'image/jpeg' } | null> {
+  // A GIF flattened through canvas loses its animation, so it keeps the size error.
+  if (file.type.toLowerCase() === 'image/gif' || maxBytes <= 0) return null
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return null
+  try {
+    const bitmap = await createImageBitmap(file)
+    try {
+      for (const ratio of DOWNSCALE_RATIOS) {
+        for (const quality of DOWNSCALE_QUALITIES) {
+          for (const mimeType of ['image/webp', 'image/jpeg'] as const) {
+            const blob = await renderScaledBlob(bitmap, ratio, mimeType, quality)
+            if (blob && blob.size <= maxBytes) {
+              return { data: base64FromBuffer(await blob.arrayBuffer()), size: blob.size, mimeType }
+            }
+          }
+        }
+      }
+      return null
+    } finally {
+      bitmap.close()
+    }
+  } catch {
+    return null
+  }
+}
+
 function isFileDrag(event: DragEvent<HTMLElement>): boolean {
   return Array.from(event.dataTransfer.types).includes('Files')
 }
@@ -86,30 +138,52 @@ export function useComposerImages({ shortName }: UseComposerImagesOptions) {
     if (imageFiles.length === 0) return
 
     const sourceBytes = imageFiles.reduce((sum, file) => sum + file.size, 0)
-    const currentBytes = imagesRef.current.reduce((sum, image) => sum + image.size, 0)
-    if (currentBytes + reservedBytesRef.current + sourceBytes > MAX_COMPOSER_IMAGE_SOURCE_BYTES) {
-      updateError('These images are too large to send. Attach smaller images (about 1.3 MB total).')
-      return
-    }
 
     reservedCountRef.current += imageFiles.length
     reservedBytesRef.current += sourceBytes
     pendingBatchesRef.current += 1
     setProcessing(true)
     try {
-      const added = await Promise.all(imageFiles.map(async (file, index): Promise<ComposerImage> => ({
-        id: crypto.randomUUID(),
-        name: file.name || `Attached image ${index + 1}`,
-        size: file.size,
-        type: 'image',
-        mimeType: file.type.toLowerCase(),
-        data: base64FromBuffer(await file.arrayBuffer()),
-      })))
+      const added: ComposerImage[] = []
+      let acceptedBytes = 0
+      let rejected = 0
+      for (const [index, file] of imageFiles.entries()) {
+        // In-flight batches reserve their raw source size as an upper bound, so
+        // only this batch's own reservation is excluded from its budget.
+        const remaining = MAX_COMPOSER_IMAGE_SOURCE_BYTES
+          - imagesRef.current.reduce((sum, image) => sum + image.size, 0)
+          - (reservedBytesRef.current - sourceBytes)
+          - acceptedBytes
+        const name = file.name || `Attached image ${index + 1}`
+        if (file.size <= remaining) {
+          added.push({
+            id: crypto.randomUUID(),
+            name,
+            size: file.size,
+            type: 'image',
+            mimeType: file.type.toLowerCase(),
+            data: base64FromBuffer(await file.arrayBuffer()),
+          })
+          acceptedBytes += file.size
+          continue
+        }
+        const scaled = await downscaleImage(file, remaining)
+        if (!scaled) {
+          rejected += 1
+          continue
+        }
+        added.push({ id: crypto.randomUUID(), name, size: scaled.size, type: 'image', mimeType: scaled.mimeType, data: scaled.data })
+        acceptedBytes += scaled.size
+      }
       if (!mountedRef.current) return
-      const next = [...imagesRef.current, ...added]
-      imagesRef.current = next
-      setImages(next)
-      if (errorRevisionRef.current === startingErrorRevision) setError('')
+      if (added.length > 0) {
+        const next = [...imagesRef.current, ...added]
+        imagesRef.current = next
+        setImages(next)
+      }
+      if (rejected === imageFiles.length) updateError('These images are too large to send. Attach smaller images (about 1.3 MB total).')
+      else if (rejected > 0) updateError(`Skipped ${rejected} image${rejected === 1 ? '' : 's'} that stayed over the size limit after scaling down.`)
+      else if (errorRevisionRef.current === startingErrorRevision) setError('')
     } catch {
       if (mountedRef.current) updateError(`${shortName} could not read the image.`)
     } finally {
