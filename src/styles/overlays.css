@@ -47,10 +47,37 @@
 .command-results small { overflow: hidden; color: var(--text-tertiary); font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
 .command-results > p { padding: 26px; color: var(--text-tertiary); text-align: center; }
 .command-palette footer { height: 33px; display: flex; align-items: center; gap: 13px; padding: 0 12px; border-top: 1px solid var(--border); color: var(--text-tertiary); background: var(--surface-subtle); font-size: 9.5px; }
-.toast { position: fixed; z-index: 300; left: 50%; bottom: 18px; max-width: min(520px, calc(100% - 32px)); min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text); background: var(--surface-raised); box-shadow: var(--shadow-popover); font-size: 11.5px; }
-.toast button { width: 22px; height: 22px; border-radius: 5px; color: var(--text-tertiary); background: transparent; }
-.toast button:hover { background: var(--surface-hover); }
-.panel-scrim { display: none; }
+.toast { position: fixed; z-index: 300; left: 50%; bottom: 18px; max-width: min(520px, calc(100% - 32px)); min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; transform: translateX(-50%); border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text); background: var(--surface-raised); box-shadow: var(--shadow-popover); font-size: 11.5px; animation: toast-in 190ms cubic-bezier(.32,.72,0,1); }
+.toast button { width: 22px; height: 22px; border-radius: 5px; color: var(--text-tertiary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
+.toast button:hover { color: var(--text); background: var(--surface-hover); }
+.panel-scrim { display: none; animation: fade-in 140ms ease-out; }
+
+/* Exit counterparts: dismiss gestures set .is-exiting via useExitAnimation and
+   unmount after the animation. Exits run slightly faster and quieter than the
+   matching enter. */
+.modal-backdrop.is-exiting { animation: fade-out 120ms ease-in forwards; }
+.modal-backdrop.is-exiting .modal { animation: modal-out 130ms ease-in forwards; }
+.palette-backdrop.is-exiting { animation: fade-out 120ms ease-in forwards; }
+.palette-backdrop.is-exiting .command-palette { animation: palette-out 120ms ease-in forwards; }
+.image-lightbox.is-exiting { animation: fade-out 120ms ease-in forwards; }
+.image-lightbox.is-exiting .image-lightbox__image { animation: lightbox-out 120ms ease-in forwards; }
+.toast.is-exiting { animation: toast-out 140ms ease-in forwards; }
+
+/* Shared entrances. popover-in rises toward the viewer for surfaces anchored
+   above their trigger; dropdown-in sinks for menus that open downward;
+   reveal-in is a quiet fade for content disclosed in place. */
+@keyframes popover-in { from { opacity: 0; transform: translateY(4px) scale(.97); } }
+@keyframes dropdown-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+@keyframes reveal-in { from { opacity: 0; transform: translateY(-3px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.97); } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(-50%) translateY(6px) scale(.98); } }
+@keyframes page-in { from { opacity: 0; transform: translateY(7px); } }
+@keyframes icon-swap { from { opacity: 0; transform: scale(.72); } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes modal-out { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+@keyframes palette-out { to { opacity: 0; transform: translateY(-4px) scale(.99); } }
+@keyframes lightbox-out { to { opacity: 0; transform: scale(.985); } }
+@keyframes sidebar-in { from { opacity: 0; transform: translateX(-8px); } }
 
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

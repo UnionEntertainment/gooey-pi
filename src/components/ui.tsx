@@ -1,5 +1,5 @@
-import { ChevronDown, X } from 'lucide-react'
-import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes } from 'react'
+import { X } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -33,23 +33,6 @@ export function BrowserGlobe({ size = 18 }: { size?: number }) {
       <ellipse cx="12" cy="12" rx="3.65" ry="9" />
       <path d="M3 12h18" />
     </svg>
-  )
-}
-
-interface SelectControlProps extends SelectHTMLAttributes<HTMLSelectElement> {
-  icon?: ReactNode
-  compact?: boolean
-  label: string
-}
-
-export function SelectControl({ icon, compact, className = '', label, children, ...props }: SelectControlProps) {
-  return (
-    <label className={`select-control ${compact ? 'select-control--compact' : ''} ${className}`} title={label}>
-      <span className="select-control__icon" aria-hidden="true">{icon}</span>
-      <span className="sr-only">{label}</span>
-      <select aria-label={label} {...props}>{children}</select>
-      <ChevronDown className="select-control__chevron" size={12} aria-hidden="true" />
-    </label>
   )
 }
 
@@ -124,6 +107,50 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
   }, [active])
   return containerRef
 }
+// Keep in sync with the exit keyframes in overlays.css (modal-out, palette-out,
+// lightbox-out, toast-out). Reduced motion collapses them to ~0ms anyway, so the
+// timeout is skipped outright when the user asked for no motion.
+const OVERLAY_EXIT_MS = 140
+
+function prefersReducedMotion(): boolean {
+  return document.documentElement.classList.contains('reduce-motion')
+    || (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+}
+
+/** Wraps a close callback so dismiss gestures (Escape, backdrop, X) play the
+ *  overlay's exit animation before the parent unmounts it. Action-driven closes
+ *  (footer buttons, command selection) still call onClose directly. */
+export function useExitAnimation(onClose: () => void): { closing: boolean; requestClose(): void } {
+  const [closing, setClosing] = useState(false)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const pendingRef = useRef<number | undefined>(undefined)
+  useEffect(() => () => { if (pendingRef.current !== undefined) window.clearTimeout(pendingRef.current) }, [])
+  const requestClose = useCallback(() => {
+    if (pendingRef.current !== undefined) return
+    if (prefersReducedMotion()) { closeRef.current(); return }
+    setClosing(true)
+    pendingRef.current = window.setTimeout(() => { pendingRef.current = undefined; closeRef.current() }, OVERLAY_EXIT_MS)
+  }, [])
+  return { closing, requestClose }
+}
+
+/** The toast owns its auto-dismiss timer so expiry plays the same exit
+ *  animation as the dismiss button instead of vanishing mid-frame. */
+export function Toast({ message, duration = 2_500, onDismiss }: { message: string; duration?: number; onDismiss(): void }) {
+  const { closing, requestClose } = useExitAnimation(onDismiss)
+  useEffect(() => {
+    const timer = window.setTimeout(requestClose, duration)
+    return () => window.clearTimeout(timer)
+  }, [message, duration, requestClose])
+  return (
+    <div className={`toast${closing ? ' is-exiting' : ''}`} role="status">
+      {message}
+      <button type="button" aria-label="Dismiss" onClick={requestClose}>×</button>
+    </div>
+  )
+}
+
 
 // Overlays (modals, the command palette) share one refcount so stacked or
 // sibling overlays only toggle the app shell's inert state on 0<->1 transitions.
@@ -142,20 +169,20 @@ export function useAppShellOverlay(active: boolean): void {
     }
   }, [active])
 }
-
 export function ImageLightbox({ source, alt, title, onClose }: { source: string; alt: string; title: string; onClose(): void }) {
   const titleId = useId()
-  const lightboxRef = useFocusTrap<HTMLElement>(true, onClose)
+  const { closing, requestClose } = useExitAnimation(onClose)
+  const lightboxRef = useFocusTrap<HTMLElement>(true, requestClose)
   useAppShellOverlay(true)
   return createPortal(
-    <div className="image-lightbox" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose()
+    <div className={`image-lightbox${closing ? ' is-exiting' : ''}`} role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) requestClose()
     }}>
       <section ref={lightboxRef} className="image-lightbox__panel" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) requestClose()
       }}>
         <h2 id={titleId} className="sr-only">{title}</h2>
-        <button type="button" className="image-lightbox__close" aria-label="Close image preview" onClick={onClose}>
+        <button type="button" className="image-lightbox__close" aria-label="Close image preview" onClick={requestClose}>
           <X size={18} />
         </button>
         <img className="image-lightbox__image" src={source} alt={alt} />
@@ -167,18 +194,20 @@ export function ImageLightbox({ source, alt, title, onClose }: { source: string;
 
 export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
   const titleId = useId()
-  const modalRef = useFocusTrap<HTMLElement>(true, onClose)
+  const { closing, requestClose } = useExitAnimation(onClose)
+  const modalRef = useFocusTrap<HTMLElement>(true, requestClose)
   useAppShellOverlay(true)
   return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={`modal-backdrop${closing ? ' is-exiting' : ''}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
       <section ref={modalRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
-        <div className="modal__header"><h2 id={titleId}>{title}</h2><IconButton label="Close" onClick={onClose}><X size={16} /></IconButton></div>
+        <div className="modal__header"><h2 id={titleId}>{title}</h2><IconButton label="Close" onClick={requestClose}><X size={16} /></IconButton></div>
         <div className="modal__body">{children}</div>
         {footer ? <div className="modal__footer">{footer}</div> : null}
       </section>
     </div>, document.body
   )
 }
+
 
 export function OmpMark({ size = 24 }: { size?: number }) {
   // The prong slots are cut out with a mask so the tile background shows

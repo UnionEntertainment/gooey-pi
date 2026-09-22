@@ -152,6 +152,7 @@ option:disabled { color: var(--text-tertiary); }
 button { border: 0; }
 button, select { cursor: default; }
 button:disabled { opacity: .38; pointer-events: none; }
+button { transition: opacity 130ms ease-out; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 code, pre, .mono { font-family: "SFMono-Regular", "SF Mono", "Cascadia Code", Menlo, monospace; }
@@ -163,7 +164,7 @@ kbd { color: var(--text-tertiary); font: 10.5px/1.2 "SFMono-Regular", "SF Mono",
 .no-drag, .drag-region button, .drag-region input { -webkit-app-region: no-drag; }
 .prime-color { color: var(--prime); }
 
-.scroll-area { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.scroll-area { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; scroll-behavior: smooth; }
 .scroll-area::-webkit-scrollbar { width: 7px; height: 7px; }
 .scroll-area::-webkit-scrollbar-track { background: transparent; }
 .scroll-area::-webkit-scrollbar-thumb { background: var(--border-strong); border: 2px solid transparent; background-clip: padding-box; border-radius: 10px; }
