@@ -1,12 +1,14 @@
-import { Bell, CheckCircle2, CircleAlert, Clock3, LoaderCircle, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import type { ProjectRecord, SessionRecord } from '@/types/api'
+import { ArrowDown, ArrowUp, Bell, CheckCircle2, CircleAlert, Clock3, LayoutGrid, LoaderCircle, Rows3, Search, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ProjectRecord, SessionRecord, SessionStatus } from '@/types/api'
 import { activityNotificationSignature, signatureCleared } from '@/app/session-attention'
 import { formatRelative } from '@/lib/data'
-import { EmptyState, Segmented } from '@/components/ui'
+import { EmptyState, IconButton, Segmented } from '@/components/ui'
 
 export type ActivityFilter = 'all' | 'attention' | 'running'
+export type ActivityMode = 'table' | 'kanban'
 export const ACTIVITY_BATCH = 250
+const ACTIVITY_MODE_KEY = 'prime-work.activity-mode'
 
 export interface ActivityViewState {
   filter: ActivityFilter
@@ -22,6 +24,30 @@ export function growActivityBatch(state: ActivityViewState, total: number): Acti
   return { ...state, visibleLimit: Math.min(total, state.visibleLimit + ACTIVITY_BATCH) }
 }
 
+function readActivityMode(): ActivityMode {
+  return typeof window !== 'undefined' && window.localStorage?.getItem(ACTIVITY_MODE_KEY) === 'kanban' ? 'kanban' : 'table'
+}
+
+function statusLabel(status: SessionStatus): string {
+  return status === 'waiting' ? 'Needs attention' : status === 'complete' ? 'Finished' : status
+}
+
+function StatusIcon({ status }: { status: SessionStatus }) {
+  if (status === 'running') return <LoaderCircle className="spin" size={13} />
+  if (status === 'failed' || status === 'waiting') return <CircleAlert size={13} />
+  return <CheckCircle2 size={13} />
+}
+
+type SortKey = 'updated' | 'title' | 'project' | 'status'
+const STATUS_ORDER: Record<SessionStatus, number> = { waiting: 0, failed: 1, running: 2, complete: 3, idle: 4, unknown: 5 }
+
+const KANBAN_COLUMNS: Array<{ key: string; label: string; statuses: SessionStatus[]; dot: string }> = [
+  { key: 'attention', label: 'Needs attention', statuses: ['waiting', 'failed'], dot: 'var(--warning)' },
+  { key: 'running', label: 'Running', statuses: ['running'], dot: 'var(--prime)' },
+  { key: 'finished', label: 'Finished', statuses: ['complete'], dot: 'var(--success)' },
+  { key: 'idle', label: 'Idle', statuses: ['idle', 'unknown'], dot: 'var(--text-tertiary)' },
+]
+
 interface ActivityPageProps {
   sessions: SessionRecord[]
   projects: ProjectRecord[]
@@ -32,7 +58,10 @@ interface ActivityPageProps {
 
 export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onClear }: ActivityPageProps) {
   const [viewState, setViewState] = useState<ActivityViewState>({ filter: 'all', query: '', visibleLimit: ACTIVITY_BATCH })
+  const [mode, setMode] = useState<ActivityMode>(readActivityMode)
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'updated', dir: -1 })
   const { filter, query, visibleLimit } = viewState
+  useEffect(() => { try { window.localStorage?.setItem(ACTIVITY_MODE_KEY, mode) } catch { /* storage unavailable */ } }, [mode])
   const projectNames = useMemo(() => new Map(projects.flatMap((project) => [...new Set([project.path, ...project.folders])].map((path) => [path, project.name] as const))), [projects])
   const normalized = query.trim().toLowerCase()
   const clearable = useMemo(() => sessions.filter((session) => {
@@ -51,13 +80,94 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
   const displayed = visible.slice(0, visibleLimit)
   const projectName = (path: string) => projectNames.get(path) ?? path.split('/').at(-1)
 
-  return <div className="page scroll-area"><div className="page-container page-container--narrow">
+  const sorted = useMemo(() => [...displayed].sort((a, b) => {
+    let result = 0
+    if (sort.key === 'updated') result = Date.parse(a.updatedAt) - Date.parse(b.updatedAt)
+    else if (sort.key === 'title') result = a.title.localeCompare(b.title)
+    else if (sort.key === 'project') result = (projectName(a.projectPath) ?? '').localeCompare(projectName(b.projectPath) ?? '')
+    else result = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
+    return sort.dir === 1 ? result : -result
+  }), [displayed, sort, projectNames])
+  const toggleSort = (key: SortKey) => setSort((current) => current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: key === 'updated' ? -1 : 1 })
+  const arrow = (key: SortKey) => sort.key === key ? (sort.dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : null
+
+  const clearButton = (session: SessionRecord, className: string) => activityNotificationSignature(session)
+    ? <button type="button" className={className} aria-label={`Clear ${session.title} activity`} title="Clear activity" onClick={(event) => { event.stopPropagation(); onClear([session]) }}><X size={15} /></button>
+    : null
+
+  return <div className="page scroll-area"><div className={mode === 'kanban' ? 'page-container' : 'page-container page-container--narrow'}>
     <header className="page-header"><div><h1>Activity</h1><p>Work in progress and sessions that need your attention.</p></div></header>
-    <div className="page-tools page-tools--activity"><Segmented value={filter} label="Activity filter" onChange={(value) => setViewState((current) => updateActivityCriteria(current, { filter: value as ActivityFilter }))} options={[{ value: 'all', label: 'All' }, { value: 'attention', label: 'Needs attention' }, { value: 'running', label: 'Running' }]}/><div className="activity-tools__right"><label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter activity"/></label><button type="button" className="button button--compact activity-clear-all" disabled={!clearable.length} onClick={() => onClear(clearable)}>Clear all</button></div></div>
-    {displayed.length ? <div className="activity-list">{displayed.map((session) => {
-      const clearableSession = Boolean(activityNotificationSignature(session))
-      return <div className="activity-row" key={session.id}><button type="button" className="activity-row__main" aria-label={`Open ${session.title}`} onClick={() => onOpen(session)}><span className={`activity-icon activity-icon--${session.status}`}>{session.status === 'running' ? <LoaderCircle className="spin" size={15}/> : session.status === 'failed' || session.status === 'waiting' ? <CircleAlert size={15}/> : <CheckCircle2 size={15}/>}</span><span className="activity-main"><span><strong>{session.title}</strong>{session.unread ? <i>New</i> : null}</span><small>{session.preview ?? 'Open session to view details'}</small><span><span>{projectName(session.projectPath)}</span><span><Clock3 size={11}/>{formatRelative(session.updatedAt)}</span></span></span><span className={`activity-status activity-status--${session.status}`}>{session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : session.status}</span></button>{clearableSession ? <button type="button" className={`activity-row__clear activity-row__clear--${session.status}`} aria-label={`Clear ${session.title} activity`} title="Clear activity" onClick={() => onClear([session])}><X size={15}/></button> : null}</div>
-    })}</div> : <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>}
+    <div className="page-tools page-tools--activity">
+      <Segmented value={filter} label="Activity filter" onChange={(value) => setViewState((current) => updateActivityCriteria(current, { filter: value as ActivityFilter }))} options={[{ value: 'all', label: 'All' }, { value: 'attention', label: 'Needs attention' }, { value: 'running', label: 'Running' }]}/>
+      <div className="activity-tools__right">
+        <label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter activity"/></label>
+        <div className="activity-mode" role="group" aria-label="Activity layout">
+          <IconButton size="small" label="Table view" className={mode === 'table' ? 'is-active' : ''} onClick={() => setMode('table')}><Rows3 size={14} /></IconButton>
+          <IconButton size="small" label="Board view" className={mode === 'kanban' ? 'is-active' : ''} onClick={() => setMode('kanban')}><LayoutGrid size={14} /></IconButton>
+        </div>
+        <button type="button" className="button button--compact activity-clear-all" disabled={!clearable.length} onClick={() => onClear(clearable)}>Clear all</button>
+      </div>
+    </div>
+    {displayed.length ? mode === 'table' ? (
+      <table className="atable">
+        <thead>
+          <tr>
+            <th className="atable__status"><button type="button" onClick={() => toggleSort('status')}>Status{arrow('status')}</button></th>
+            <th><button type="button" onClick={() => toggleSort('title')}>Session{arrow('title')}</button></th>
+            <th className="atable__project"><button type="button" onClick={() => toggleSort('project')}>Project{arrow('project')}</button></th>
+            <th className="atable__time"><button type="button" onClick={() => toggleSort('updated')}>Updated{arrow('updated')}</button></th>
+            <th className="atable__actions" aria-label="Actions" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((session) => (
+            <tr key={session.id} className="atable-row" role="button" tabIndex={0} aria-label={`Open ${session.title}`} onClick={() => onOpen(session)} onKeyDown={(event) => { if (event.key === 'Enter') onOpen(session) }}>
+              <td><span className={`atable-status atable-status--${session.status}`}><StatusIcon status={session.status} />{statusLabel(session.status)}</span></td>
+              <td className="atable__session">
+                <span className="atable__title"><strong>{session.title}</strong>{session.unread ? <i className="activity-new">New</i> : null}</span>
+                <span className="atable__preview">{session.preview ?? ''}</span>
+              </td>
+              <td className="atable__project">{projectName(session.projectPath)}</td>
+              <td className="atable__time">{formatRelative(session.updatedAt)}</td>
+              <td className="atable__actions">{clearButton(session, 'atable__clear')}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    ) : (
+      <div className="kanban">
+        {KANBAN_COLUMNS.map((column) => {
+          const columnSessions = displayed.filter((session) => column.statuses.includes(session.status))
+          return <section className="kanban-col" key={column.key} aria-label={`${column.label}, ${columnSessions.length}`}>
+            <h2 className="kanban-col__heading">
+              <span className="kanban-col__dot" style={{ background: column.dot }} />
+              <span>{column.label}</span>
+              <span className="kanban-col__count">{columnSessions.length}</span>
+            </h2>
+            <div className="kanban-col__cards">
+              {columnSessions.length ? columnSessions.map((session) => (
+                <div className="kcard" key={session.id}>
+                  <button type="button" className="kcard__main" aria-label={`Open ${session.title}`} onClick={() => onOpen(session)}>
+                    <span className="kcard__top">
+                      <span className={`activity-icon activity-icon--${session.status} kcard__icon`}><StatusIcon status={session.status} /></span>
+                      <strong className="kcard__title">{session.title}</strong>
+                      {session.unread ? <i className="activity-new">New</i> : null}
+                    </span>
+                    {session.preview ? <span className="kcard__preview">{session.preview}</span> : null}
+                    <span className="kcard__meta">
+                      <span>{projectName(session.projectPath)}</span>
+                      {session.status === 'failed' ? <span className="kcard__flag">Failed</span> : null}
+                      <span className="kcard__time"><Clock3 size={10} />{formatRelative(session.updatedAt)}</span>
+                    </span>
+                  </button>
+                  {clearButton(session, 'kcard__clear')}
+                </div>
+              )) : <p className="kanban-col__empty">Nothing here</p>}
+            </div>
+          </section>
+        })}
+      </div>
+    ) : <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>}
     {visible.length > displayed.length ? <button type="button" className="page-show-more" onClick={() => setViewState((current) => growActivityBatch(current, visible.length))}>Show {Math.min(ACTIVITY_BATCH, visible.length - displayed.length)} more sessions</button> : null}
   </div></div>
 }

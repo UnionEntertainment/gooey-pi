@@ -1193,8 +1193,8 @@ test.describe('Prime Work desktop smoke', () => {
   test('clears individual and all Activity notifications persistently', async () => {
     await page.getByRole('button', { name: 'Activity', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
-    const primaryActivity = page.locator('.activity-row').filter({ hasText: 'Primary workspace fixture' })
-    const fixtureActivity = page.locator('.activity-row').filter({ hasText: 'Hermetic desktop fixture' })
+    const primaryActivity = page.locator('.atable-row').filter({ hasText: 'Primary workspace fixture' })
+    const fixtureActivity = page.locator('.atable-row').filter({ hasText: 'Hermetic desktop fixture' })
     await expect(primaryActivity).toBeVisible()
     await expect(fixtureActivity).toBeVisible()
 
@@ -1212,7 +1212,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.reload()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
     await page.getByRole('button', { name: 'Activity', exact: true }).click()
-    await expect(page.locator('.activity-row').filter({ hasText: 'Primary workspace fixture' })).toHaveCount(0)
+    await expect(page.locator('.atable-row').filter({ hasText: 'Primary workspace fixture' })).toHaveCount(0)
     await page.getByRole('button', { name: 'Clear all' }).click()
     await expect(page.getByRole('heading', { name: 'You’re all caught up' })).toBeVisible()
   })

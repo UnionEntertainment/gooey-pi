@@ -82,7 +82,6 @@
   .activity-tools__right { width: 100%; }
   .activity-tools__right .page-search { flex: 1; }
   .activity-clear-all { min-height: 38px; }
-  .activity-status { display: none; }
   .project-item__actions { opacity: 1; }
   .plugin-header { align-items: flex-start; flex-direction: column; }
   .plugin-header > div:last-child { flex-wrap: wrap; }
