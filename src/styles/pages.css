@@ -39,6 +39,20 @@
 .activity-icon--running, .activity-icon--complete { color: var(--prime); background: var(--prime-soft); }
 .activity-icon--waiting, .activity-icon--failed { color: var(--warning); background: var(--warning-soft); }
 
+/* Reviewed state */
+.atable__seen { width: 26px; }
+.seen-dot { width: 16px; height: 16px; display: grid; place-items: center; padding: 0; border-radius: 50%; background: transparent; }
+.seen-dot::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--prime); transition: background 130ms ease-out, transform 130ms ease-out; }
+.seen-dot.is-checked::after { background: var(--border-strong); transform: scale(.8); }
+.seen-dot:hover::after, .seen-dot:focus-visible::after { background: var(--text-secondary); }
+.atable-row.is-checked .atable__title strong { font-weight: 500; color: var(--text-secondary); }
+.atable-row.is-checked .atable__preview, .atable-row.is-checked .atable__project, .atable-row.is-checked .atable__time { color: var(--text-tertiary); }
+.atable-row.is-checked .atable-status { opacity: .55; }
+.kcard.is-checked .kcard__title { font-weight: 500; color: var(--text-secondary); }
+.kcard.is-checked .kcard__preview, .kcard.is-checked .kcard__meta { color: var(--text-tertiary); }
+.kcard.is-checked .activity-icon { opacity: .55; }
+.kcard .seen-dot { flex: 0 0 auto; margin-top: 3px; }
+
 /* Table mode */
 .atable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
 .atable thead th { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); font-size: 10.5px; font-weight: 560; text-align: left; }

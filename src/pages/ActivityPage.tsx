@@ -9,6 +9,7 @@ export type ActivityFilter = 'all' | 'attention' | 'running'
 export type ActivityMode = 'table' | 'kanban'
 export const ACTIVITY_BATCH = 250
 const ACTIVITY_MODE_KEY = 'prime-work.activity-mode'
+const ACTIVITY_REVIEWED_KEY = 'prime-work.activity-reviewed'
 
 export interface ActivityViewState {
   filter: ActivityFilter
@@ -26,6 +27,22 @@ export function growActivityBatch(state: ActivityViewState, total: number): Acti
 
 function readActivityMode(): ActivityMode {
   return typeof window !== 'undefined' && window.localStorage?.getItem(ACTIVITY_MODE_KEY) === 'kanban' ? 'kanban' : 'table'
+}
+
+function sessionRevision(session: SessionRecord): string {
+  return String(session.eventRevision ?? session.updatedAt)
+}
+
+function readReviewed(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage?.getItem(ACTIVITY_REVIEWED_KEY) ?? '{}')
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const result: Record<string, string> = {}
+    for (const [id, revision] of Object.entries(parsed)) {
+      if (typeof revision === 'string') result[id] = revision
+    }
+    return result
+  } catch { return {} }
 }
 
 function statusLabel(status: SessionStatus): string {
@@ -79,6 +96,30 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
   }).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)), [clearedActivity, sessions, filter, normalized])
   const displayed = visible.slice(0, visibleLimit)
   const projectName = (path: string) => projectNames.get(path) ?? path.split('/').at(-1)
+  const [reviewed, setReviewed] = useState<Record<string, string>>(readReviewed)
+  useEffect(() => { try { window.localStorage?.setItem(ACTIVITY_REVIEWED_KEY, JSON.stringify(reviewed)) } catch { /* storage unavailable */ } }, [reviewed])
+  const isReviewed = (session: SessionRecord) => reviewed[session.id] === sessionRevision(session)
+  const toggleReviewed = (session: SessionRecord) => setReviewed((current) => {
+    const next = { ...current }
+    if (next[session.id] === sessionRevision(session)) delete next[session.id]
+    else next[session.id] = sessionRevision(session)
+    return next
+  })
+  const openSession = (session: SessionRecord) => {
+    setReviewed((current) => ({ ...current, [session.id]: sessionRevision(session) }))
+    onOpen(session)
+  }
+  const seenDot = (session: SessionRecord) => {
+    const checked = isReviewed(session)
+    return <button
+      type="button"
+      className={`seen-dot${checked ? ' is-checked' : ''}`}
+      aria-label={checked ? `Mark ${session.title} as not reviewed` : `Mark ${session.title} as reviewed`}
+      aria-pressed={checked}
+      title={checked ? 'Mark as not reviewed' : 'Mark as reviewed'}
+      onClick={(event) => { event.stopPropagation(); toggleReviewed(session) }}
+    />
+  }
 
   const sorted = useMemo(() => [...displayed].sort((a, b) => {
     let result = 0
@@ -112,6 +153,7 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
       <table className="atable">
         <thead>
           <tr>
+            <th className="atable__seen" aria-label="Reviewed" />
             <th className="atable__status"><button type="button" onClick={() => toggleSort('status')}>Status{arrow('status')}</button></th>
             <th><button type="button" onClick={() => toggleSort('title')}>Session{arrow('title')}</button></th>
             <th className="atable__project"><button type="button" onClick={() => toggleSort('project')}>Project{arrow('project')}</button></th>
@@ -121,7 +163,8 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
         </thead>
         <tbody>
           {sorted.map((session) => (
-            <tr key={session.id} className="atable-row" role="button" tabIndex={0} aria-label={`Open ${session.title}`} onClick={() => onOpen(session)} onKeyDown={(event) => { if (event.key === 'Enter') onOpen(session) }}>
+            <tr key={session.id} className={`atable-row${isReviewed(session) ? ' is-checked' : ''}`} role="button" tabIndex={0} aria-label={`Open ${session.title}`} onClick={() => openSession(session)} onKeyDown={(event) => { if (event.key === 'Enter') openSession(session) }}>
+              <td className="atable__seen">{seenDot(session)}</td>
               <td><span className={`atable-status atable-status--${session.status}`}><StatusIcon status={session.status} />{statusLabel(session.status)}</span></td>
               <td className="atable__session">
                 <span className="atable__title"><strong>{session.title}</strong>{session.unread ? <i className="activity-new">New</i> : null}</span>
@@ -146,9 +189,10 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
             </h2>
             <div className="kanban-col__cards">
               {columnSessions.length ? columnSessions.map((session) => (
-                <div className="kcard" key={session.id}>
-                  <button type="button" className="kcard__main" aria-label={`Open ${session.title}`} onClick={() => onOpen(session)}>
+                <div className={`kcard${isReviewed(session) ? ' is-checked' : ''}`} key={session.id}>
+                  <button type="button" className="kcard__main" aria-label={`Open ${session.title}`} onClick={() => openSession(session)}>
                     <span className="kcard__top">
+                      {seenDot(session)}
                       <span className={`activity-icon activity-icon--${session.status} kcard__icon`}><StatusIcon status={session.status} /></span>
                       <strong className="kcard__title">{session.title}</strong>
                       {session.unread ? <i className="activity-new">New</i> : null}
