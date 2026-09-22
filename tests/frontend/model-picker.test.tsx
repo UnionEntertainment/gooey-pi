@@ -54,11 +54,13 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-async function renderPicker(onChange = vi.fn()) {
+const levels = ['low', 'medium', 'high'] as const
+
+async function renderPicker(onChange = vi.fn(), onEffortChange = vi.fn()) {
   await act(async () => {
-    root.render(<ModelPicker value="openai/gpt-5.6-sol" modelsByProvider={modelsByProvider} providers={providers} onChange={onChange} />)
+    root.render(<ModelPicker value="openai/gpt-5.6-sol" effort="medium" reasoningLevels={[...levels]} modelsByProvider={modelsByProvider} providers={providers} onChange={onChange} onEffortChange={onEffortChange} />)
   })
-  return onChange
+  return { onChange, onEffortChange }
 }
 
 async function openPicker(): Promise<HTMLInputElement> {
@@ -117,7 +119,7 @@ describe('ModelPicker', () => {
       { id: 'openai', name: 'OpenAI', authMethod: 'oauth', configured: true, modelCount: 1, availableModelCount: 1, enabled: true },
     ]
     await act(async () => {
-      root.render(<ModelPicker value="openai/gpt-5.6-sol" modelsByProvider={groupModelsByProvider(collidingModels)} providers={collidingProviders} onChange={vi.fn()} />)
+      root.render(<ModelPicker value="openai/gpt-5.6-sol" effort="medium" reasoningLevels={[...levels]} modelsByProvider={groupModelsByProvider(collidingModels)} providers={collidingProviders} onChange={vi.fn()} onEffortChange={vi.fn()} />)
     })
     await openPicker()
 
@@ -164,7 +166,7 @@ describe('ModelPicker', () => {
   })
 
   it('selects an available result from the keyboard and restores trigger focus', async () => {
-    const onChange = await renderPicker()
+    const { onChange } = await renderPicker()
     const search = await openPicker()
 
     await act(async () => {
@@ -180,7 +182,7 @@ describe('ModelPicker', () => {
   })
 
   it('keeps unavailable models visible but prevents selection', async () => {
-    const onChange = await renderPicker()
+    const { onChange } = await renderPicker()
     const search = await openPicker()
 
     await setSearch(search, 'sonnet')
@@ -190,5 +192,32 @@ describe('ModelPicker', () => {
     await act(async () => unavailable.click())
     expect(onChange).not.toHaveBeenCalled()
     expect(container.querySelector('.model-picker__popover')).not.toBeNull()
+  })
+
+  it('changes reasoning effort through the slider inside the popover', async () => {
+    const { onEffortChange } = await renderPicker()
+    await openPicker()
+
+    const slider = container.querySelector<HTMLInputElement>('.model-picker__slider input[type="range"]')!
+    expect(slider.value).toBe('1')
+    expect(slider.max).toBe('2')
+    expect(container.querySelectorAll('.model-picker__ticks span')).toHaveLength(2)
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '2')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onEffortChange).toHaveBeenCalledWith('high')
+    expect(container.querySelector('.model-picker__popover')).not.toBeNull()
+  })
+
+  it('hides the effort slider when the model offers a single level', async () => {
+    await act(async () => {
+      root.render(<ModelPicker value="openai/gpt-5.6-sol" effort="medium" reasoningLevels={['medium']} modelsByProvider={modelsByProvider} providers={providers} onChange={vi.fn()} onEffortChange={vi.fn()} />)
+    })
+    await openPicker()
+
+    expect(container.querySelector('.model-picker__slider')).toBeNull()
   })
 })

@@ -1,12 +1,26 @@
-import { Brain, Check, ChevronDown, Search } from 'lucide-react'
-import { memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { PrimeModelDescriptor, PrimeProviderDescriptor } from '@/types/api'
+import { Brain, Check, ChevronDown, Gauge, Search } from 'lucide-react'
+import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel } from '@/types/api'
 
 interface ModelPickerProps {
   value: string
+  effort: PrimeThinkingLevel
+  /** Ordered stops on the effort slider; the control hides when a model offers one or none. */
+  reasoningLevels: PrimeThinkingLevel[]
   modelsByProvider: ReadonlyMap<string, PrimeModelDescriptor[]>
   providers: PrimeProviderDescriptor[]
   onChange(value: string): void
+  onEffortChange(value: PrimeThinkingLevel): void
+}
+
+const reasoningLabels: Record<PrimeThinkingLevel, string> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Standard',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
 }
 
 interface ModelGroup {
@@ -14,7 +28,7 @@ interface ModelGroup {
   models: PrimeModelDescriptor[]
 }
 
-export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, providers, onChange }: ModelPickerProps) {
+export const ModelPicker = memo(function ModelPicker({ value, effort, reasoningLevels, modelsByProvider, providers, onChange, onEffortChange }: ModelPickerProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   // null, not a string sentinel: harness catalogs are user-authored, so a
@@ -105,6 +119,12 @@ export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, 
     // Escape is owned by the popover container so it also dismisses from the
     // provider filters and the options, matching the native select it replaces.
   }
+  // A single fixed level leaves nothing to choose, so the slider only renders
+  // when the selected model actually offers a range.
+  const showEffort = reasoningLevels.length > 1
+  const effortIndex = Math.max(0, reasoningLevels.indexOf(effort))
+  const effortFill = showEffort ? (effortIndex / (reasoningLevels.length - 1)) * 100 : 0
+
 
   const resultCount = visibleModels.length
   return (
@@ -113,7 +133,7 @@ export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, 
         ref={triggerRef}
         type="button"
         className="permissions-chip model-picker__trigger"
-        aria-label={`Model: ${selected?.name ?? 'No model available'}`}
+        aria-label={`Model: ${selected?.name ?? 'No model available'}${showEffort ? ` · Effort: ${reasoningLabels[effort]}` : ''}`}
         title={selected?.name ?? 'No model available'}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -129,6 +149,7 @@ export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, 
       >
         <Brain size={14} />
         <span>{selected?.name ?? 'No model available'}</span>
+        {showEffort ? <span className="model-picker__effort-hint">· {reasoningLabels[effort]}</span> : null}
         <ChevronDown size={11} aria-hidden="true" />
       </button>
       {open ? (
@@ -147,6 +168,32 @@ export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, 
             if (next instanceof Node && !rootRef.current?.contains(next)) close()
           }}
         >
+          {showEffort ? (
+            <div className="model-picker__effort">
+              <div className="model-picker__effort-label">
+                <Gauge size={13} aria-hidden="true" />
+                <span>Reasoning effort</span>
+                <strong>{reasoningLabels[effort]}</strong>
+              </div>
+              <div className="model-picker__slider">
+                <input
+                  type="range"
+                  aria-label="Reasoning effort"
+                  min={0}
+                  max={reasoningLevels.length - 1}
+                  step={1}
+                  value={effortIndex}
+                  style={{ '--fill': `${effortFill}%` } as CSSProperties}
+                  onChange={(event) => onEffortChange(reasoningLevels[event.currentTarget.valueAsNumber] ?? effort)}
+                />
+                <div className="model-picker__ticks" aria-hidden="true">
+                  {reasoningLevels.map((level, index) => index === effortIndex ? null : (
+                    <span key={level} style={{ left: `calc(var(--thumb) / 2 + (100% - var(--thumb)) * ${index / (reasoningLevels.length - 1)})` }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="model-picker__search">
             <Search size={14} aria-hidden="true" />
             <input

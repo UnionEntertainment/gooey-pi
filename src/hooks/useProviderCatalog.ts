@@ -127,7 +127,7 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
     return catalog?.models.find((candidate) => candidate.key === model && candidate.enabled !== false && candidate.available)
   }, [catalog, model])
   const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? DEFAULT_REASONING_LEVELS
-  // Group once per catalog identity so the composer's <option> tree can memoize.
+  // Group once per catalog identity so the model picker's option tree can memoize.
   const modelsByProvider = useMemo(() => groupModelsByProvider(catalog?.models), [catalog?.models])
 
   useEffect(() => {

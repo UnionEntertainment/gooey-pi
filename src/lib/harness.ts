@@ -1,4 +1,4 @@
-import type { HarnessId } from '@/types/api'
+import type { HarnessId, OmpApprovalMode } from '@/types/api'
 
 export const HARNESS_SELECTOR_ORDER: readonly HarnessId[] = ['pi', 'omp', 'prime']
 
@@ -10,3 +10,11 @@ export const HARNESS_AGENT_NAMES: Record<HarnessId, string> = { prime: 'Prime Ag
 
 /** Short conversational name ("Prime is working"). */
 export const HARNESS_SHORT_NAMES: Record<HarnessId, string> = { prime: 'Prime', omp: 'OMP', pi: 'Pi' }
+
+/** Labels for the OMP --approval-mode override, shared by settings and the composer control. */
+export const OMP_APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
+  'inherit': 'Inherit omp config',
+  'always-ask': 'Always ask',
+  'write': 'Prompt for exec only (write)',
+  'yolo': 'YOLO (never prompt)',
+}

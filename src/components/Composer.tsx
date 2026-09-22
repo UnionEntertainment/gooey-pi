@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Paperclip, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Paperclip, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -16,6 +16,7 @@ import type {
   PromptDeliveryIntent,
   PromptImage,
   QueuedPrompt,
+  OmpApprovalMode,
   SessionRecord,
   SkillRecord,
   TerminalPromptContext,
@@ -31,10 +32,11 @@ import { contextDialLabel } from '@/lib/format-cost'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { useComposerImages, type ComposerImage } from '@/hooks/useComposerImages'
 import { useDictation } from '@/hooks/useDictation'
-import { IconButton, ImageLightbox, SelectControl } from './ui'
+import { IconButton, ImageLightbox } from './ui'
 import { ExecutingModelChip, type ExecutingModelChipProps } from './ExecutingModelChip'
 import { ModelPicker } from './ModelPicker'
 import { CheckoutPicker } from './CheckoutPicker'
+import { ApprovalModePicker } from './ApprovalModePicker'
 
 interface ComposerProps {
   busy: boolean
@@ -82,6 +84,9 @@ interface ComposerProps {
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
+  /** OMP tool-approval override; the control renders only for the OMP harness. */
+  approvalMode?: OmpApprovalMode
+  onApprovalModeChange?(value: OmpApprovalMode): void
   checkoutCatalog?: CheckoutCatalog
   /** Branch/worktree name shown before or without the linked-worktree catalog. */
   checkoutLabel?: string
@@ -109,17 +114,8 @@ const primeCommands = [
   { command: '/mcp', detail: 'View MCP integrations and local servers' },
 ]
 
-const reasoningLabels: Record<PrimeThinkingLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Standard',
-  high: 'High',
-  xhigh: 'Extra high',
-  max: 'Max',
-}
-
 const MAX_IMAGE_PROMPT_BYTES = 2 * 1024 * 1024
+
 
 const EMPTY_ANNOTATIONS: BrowserAnnotation[] = []
 const noop = () => undefined
@@ -160,6 +156,8 @@ export const Composer = memo(function Composer({
   onModelChange,
   onEffortChange,
   onFastChange,
+  approvalMode = 'inherit',
+  onApprovalModeChange,
   checkoutCatalog,
   checkoutLabel,
   checkoutsLoading = false,
@@ -717,15 +715,8 @@ export const Composer = memo(function Composer({
                 void imageAttachments.ingest(files)
               }}
             />
-            <ModelPicker value={model} modelsByProvider={modelsByProvider} providers={providers} onChange={onModelChange} />
+            <ModelPicker value={model} effort={effort} reasoningLevels={reasoningLevels} modelsByProvider={modelsByProvider} providers={providers} onChange={onModelChange} onEffortChange={onEffortChange} />
             <ExecutingModelChip executingModel={executingModel} />
-            <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value as PrimeThinkingLevel)}>
-              {reasoningLevels.map((level) => (
-                <option key={level} value={level}>
-                  {reasoningLabels[level]}
-                </option>
-              ))}
-            </SelectControl>
             {fastSupported ? (
               <button
                 type="button"
@@ -738,6 +729,7 @@ export const Composer = memo(function Composer({
                 <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> <span className="fast-mode-toggle__label">Fast</span>
               </button>
             ) : null}
+            {harness === 'omp' && onApprovalModeChange ? <ApprovalModePicker value={approvalMode} onChange={onApprovalModeChange} /> : null}
             <CheckoutPicker catalog={checkoutCatalog} fallbackLabel={checkoutLabel} loading={checkoutsLoading} onExecute={onExecuteCheckout} />
           </div>
           <div className="composer__actions">

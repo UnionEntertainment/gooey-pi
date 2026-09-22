@@ -421,6 +421,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
         services.pi.agents.requestRuntimeEnvironmentRefresh(),
       ])
     }
+    // --approval-mode is a spawn flag (OMP exposes no live approval RPC), so a
+    // changed override takes effect by retiring idle OMP runtimes; the next
+    // prompt respawns the session with the new flag.
+    if (settings.ompApprovalMode !== previous.ompApprovalMode) await services.omp.agents.requestRuntimeEnvironmentRefresh()
     return settings
   })
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())

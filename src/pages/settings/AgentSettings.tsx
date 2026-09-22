@@ -2,18 +2,11 @@ import { Bot, Keyboard, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
 import { errorMessage } from '@/lib/errors'
-import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES } from '@/lib/harness'
+import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES, OMP_APPROVAL_MODE_LABELS } from '@/lib/harness'
 import { detectRendererPlatform, shortcutLabel } from '@/lib/platform-shortcuts'
 import type { SettingsMetaSectionProps } from './contracts'
 import { DraftSettingField } from './DraftSettingField'
 import { SettingsToggle } from './SettingsToggle'
-
-const APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
-  'inherit': 'Inherit omp config',
-  'always-ask': 'Always ask',
-  'write': 'Prompt for exec only (write)',
-  'yolo': 'YOLO (never prompt)',
-}
 
 export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: SettingsMetaSectionProps) {
   const activeHarness = settings.activeHarness
@@ -50,7 +43,7 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
         <label className="settings-row">
           <span><strong>OMP approval mode</strong><small>How OMP asks before running tools; Inherit leaves your omp configuration in charge.</small></span>
           <select value={settings.ompApprovalMode} onChange={(event) => { void onUpdate({ ompApprovalMode: event.target.value as OmpApprovalMode }) }}>
-            {OMP_APPROVAL_MODES.map((mode) => <option key={mode} value={mode}>{APPROVAL_MODE_LABELS[mode]}</option>)}
+            {OMP_APPROVAL_MODES.map((mode) => <option key={mode} value={mode}>{OMP_APPROVAL_MODE_LABELS[mode]}</option>)}
           </select>
         </label>
       </section>

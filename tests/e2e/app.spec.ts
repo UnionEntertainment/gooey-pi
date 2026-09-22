@@ -95,7 +95,7 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
           id: 'fixture-model',
           name: 'Fixture Model',
           reasoning: true,
-          thinkingLevelMap: { medium: 'medium' },
+          thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high' },
           input: ['text', 'image'],
           contextWindow: 100000,
           maxTokens: 8192,
@@ -712,16 +712,15 @@ test.describe('Prime Work desktop smoke', () => {
 
     const model = page.locator('.model-picker')
     const modelTrigger = model.locator('.model-picker__trigger')
-    const reasoning = page.locator('.select-control').filter({ has: page.getByRole('combobox', { name: 'Reasoning effort' }) })
-    await expect(modelTrigger.locator('span')).toHaveCSS('display', 'block')
-    await expect(reasoning.locator('.select-control__chevron')).toHaveCSS('display', 'none')
-    await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '1')
+    await expect(modelTrigger.locator('span').first()).toHaveCSS('display', 'block')
+
+    await modelTrigger.click()
+    await expect(model.locator('.model-picker__slider input[type="range"]')).toBeVisible()
+    await page.keyboard.press('Escape')
 
     await page.locator('.conversation-column').evaluate((node) => { node.style.flex = '0 0 300px' })
-    await expect(modelTrigger.locator('span')).toHaveCSS('display', 'none')
+    await expect(modelTrigger.locator('span').first()).toHaveCSS('display', 'none')
     await expect(modelTrigger.locator('svg').first()).not.toHaveCSS('display', 'none')
-    await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '0')
-    await expect(reasoning.locator('.select-control__icon')).not.toHaveCSS('display', 'none')
 
     const controlBounds = await page.locator('.composer__footer').evaluate((footer) => {
       const controls = footer.querySelector<HTMLElement>('.composer__controls')!

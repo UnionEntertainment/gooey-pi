@@ -166,6 +166,32 @@ describe('registerIpc verify gate', () => {
     registration.dispose()
   })
 
+  it('recycles only OMP runtimes when the approval-mode override changes', async () => {
+    const event = fakeEvent()
+    const refreshPrime = vi.fn(async () => undefined)
+    const refreshOmp = vi.fn(async () => undefined)
+    const refreshPi = vi.fn(async () => undefined)
+    stubs.settings = {
+      get: () => ({ ompApprovalMode: 'inherit' }),
+      update: vi.fn(async () => ({ ompApprovalMode: 'yolo' })),
+    }
+    stubs.agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshPrime }
+    const ompHarness = harnessStub()
+    ompHarness.agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshOmp }
+    stubs.omp = ompHarness
+    const piHarness = harnessStub()
+    piHarness.agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshPi }
+    stubs.pi = piHarness
+    registration.authorize(event.sender as never)
+
+    await handlers.get('settings:update')!(event, { ompApprovalMode: 'yolo' })
+
+    expect(refreshOmp).toHaveBeenCalledOnce()
+    expect(refreshPrime).not.toHaveBeenCalled()
+    expect(refreshPi).not.toHaveBeenCalled()
+    registration.dispose()
+  })
+
   it('rejects a sub-frame sender even when its URL is trusted', () => {
     const event = fakeEvent({ subFrame: true })
     registration.authorize(event.sender as never)
