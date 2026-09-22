@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { MessagePart, TranscriptMessage } from '../../../src/types/api'
 import { SESSION_FILE_RECORD_LIMIT_BYTES } from '../jsonl-limits'
 import { strictJsonLines } from '../jsonl'
@@ -21,6 +24,31 @@ const MAX_PART_ARGS_CHARS = 128 * 1024
 const MAX_PART_IMAGE_CHARS = 2 * 1024 * 1024
 const MAX_PARTS_PER_RECORD = 200
 const TRUNCATION_MARKER = '\n… [truncated] …\n'
+
+// Harnesses may store image payloads out of line as `blob:sha256:<hash>`
+// references into `<agent dir>/blobs/`; the renderer only accepts inline base64.
+const BLOB_IMAGE_REFERENCE = /^blob:sha256:([0-9a-f]{64})$/i
+// A blob must still fit the per-part base64 budget once encoded.
+const MAX_BLOB_IMAGE_BYTES = Math.floor(MAX_PART_IMAGE_CHARS / 4) * 3
+
+async function readBlobImage(blobRoot: string, hash: string, mimeType: string | undefined): Promise<string | undefined> {
+  const subtype = mimeType?.toLowerCase().startsWith('image/') ? mimeType.toLowerCase().slice('image/'.length) : undefined
+  const names = [hash]
+  // The blob store keeps a `<hash>.<ext>` hardlink beside the bare `<hash>` name.
+  if (subtype && /^[a-z\d]+$/.test(subtype)) names.push(`${hash}.${subtype}`)
+  if (subtype === 'jpeg') names.push(`${hash}.jpg`)
+  for (const name of names) {
+    try {
+      const filePath = join(blobRoot, name)
+      const info = await stat(filePath)
+      if (!info.isFile() || info.size > MAX_BLOB_IMAGE_BYTES) continue
+      const data = await readFile(filePath)
+      if (createHash('sha256').update(data).digest('hex') !== hash.toLowerCase()) continue
+      return data.toString('base64')
+    } catch { /* missing or unreadable blob: try the next candidate */ }
+  }
+  return undefined
+}
 
 export function boundedString(value: string, max: number): string {
   if (max <= 0) return ''
@@ -207,11 +235,14 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
 export interface TranscriptDialect {
   isRenderable(entry: JsonRecord): boolean
   renderEntry?(entry: JsonRecord, safeId: string): TranscriptMessage | undefined
+  /** Directory holding `blob:sha256:<hash>` image payloads, when the harness stores them out of line. */
+  blobRoot?: string
 }
 
 const primeTranscriptDialect: TranscriptDialect = {
   isRenderable: (entry) => entry.type === 'message' || entry.type === 'compaction'
     || (entry.type === 'custom_message' && entry.display === true),
+  blobRoot: join(homedir(), '.prime', 'agent', 'blobs'),
 }
 
 export type TranscriptFileReader = (filePath: string, isStreaming: boolean) => Promise<TranscriptMessage[]>
@@ -435,7 +466,32 @@ async function readTranscriptWithDialect(dialect: TranscriptDialect, filePath: s
     activeAssistant = undefined
   }
   if (isStreaming && activeAssistant) { activeAssistant.streaming = true; activeAssistant.completedAt = undefined }
-  return boundedTranscript(transcript)
+  const bounded = boundedTranscript(transcript)
+  if (dialect.blobRoot && bounded.some((message) => message.parts.some((part) => part.type === 'image' && BLOB_IMAGE_REFERENCE.test(part.data ?? '')))) {
+    // Blob references bypassed the image budget as ~70-char strings; charge the
+    // resolved base64 against whatever the inline images left over.
+    let imageBudget = MAX_TRANSCRIPT_IMAGE_CHARS
+    for (const message of bounded) {
+      for (const part of message.parts) {
+        if (part.type !== 'image' || !part.data) continue
+        const reference = BLOB_IMAGE_REFERENCE.exec(part.data)
+        if (!reference) {
+          imageBudget -= part.data.length
+          continue
+        }
+        if (part.dataTruncated) continue
+        const data = imageBudget > 0 ? await readBlobImage(dialect.blobRoot, reference[1], part.mimeType) : undefined
+        if (data && data.length <= imageBudget) {
+          part.data = data
+          imageBudget -= data.length
+        } else {
+          part.data = undefined
+          part.dataTruncated = true
+        }
+      }
+    }
+  }
+  return bounded
 }
 
 export const readTranscript: TranscriptFileReader = createTranscriptReader()

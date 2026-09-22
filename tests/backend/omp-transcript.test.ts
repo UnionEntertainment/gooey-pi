@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createBranchSummaryTranscriptReader } from '../../electron/main/sessions/bucketed'
 import { OMP_TITLE_SLOT_BYTES, readOmpTranscript } from '../../electron/main/sessions/omp'
 
 const dirs: string[] = []
@@ -140,5 +142,28 @@ describe('OMP transcript system entries', () => {
       { type: 'toolCall', id: 'aa000004', name: 'Session Note' },
       { type: 'toolResult', name: 'Session Note', text: 'A note worth showing.' },
     ])
+  })
+})
+
+describe('OMP transcript blob images', () => {
+  it('resolves blob:sha256 image references against the blob store', async () => {
+    const blobRoot = mkdtempSync(join(tmpdir(), 'prime-work-omp-blobs-'))
+    dirs.push(blobRoot)
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+    const hash = createHash('sha256').update(png).digest('hex')
+    writeFileSync(join(blobRoot, hash), png)
+    const file = ompSessionFile([
+      JSON.stringify({ type: 'message', id: 'aa000001', parentId: null, timestamp: '2026-08-08T02:13:00.000Z', message: { role: 'user', content: [
+        { type: 'text', text: 'look at this' },
+        { type: 'image', mimeType: 'image/png', data: `blob:sha256:${hash}` },
+        { type: 'image', mimeType: 'image/webp', data: `blob:sha256:${'0'.repeat(64)}` },
+      ] } }),
+    ])
+
+    const transcript = await createBranchSummaryTranscriptReader(blobRoot)(file, false)
+    const parts = transcript[0]?.parts ?? []
+    expect(parts[1]).toEqual({ type: 'image', mimeType: 'image/png', data: png.toString('base64') })
+    // A missing blob degrades to the renderer's unavailable state, not a bogus src.
+    expect(parts[2]).toMatchObject({ type: 'image', dataTruncated: true, data: undefined })
   })
 })

@@ -182,10 +182,11 @@ export function createBucketedMetadataParser(ingestRecord: BucketedRecordIngest)
  * Transcript reader over the shared branch machinery for dialects where
  * `branch_summary` records are renderable (and can anchor the active leaf) in
  * addition to the shared `message`, `compaction`, and displayed
- * `custom_message` types.
+ * `custom_message` types. `blobRoot` resolves `blob:sha256:` image payloads.
  */
-export function createBranchSummaryTranscriptReader(): TranscriptFileReader {
+export function createBranchSummaryTranscriptReader(blobRoot?: string): TranscriptFileReader {
   return createTranscriptReader({
+    blobRoot,
     isRenderable: (entry) => entry.type === 'message' || entry.type === 'compaction' || entry.type === 'branch_summary'
       || (entry.type === 'custom_message' && entry.display === true)
       || Boolean(fallbackModelFromRecord(entry)),

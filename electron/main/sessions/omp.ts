@@ -134,7 +134,7 @@ export function createOmpSessionMetadataReader(io: SessionMetadataReaderIo = nod
   }
 }
 
-export const readOmpTranscript: TranscriptFileReader = createBranchSummaryTranscriptReader()
+export const readOmpTranscript: TranscriptFileReader = createBranchSummaryTranscriptReader(join(homedir(), '.omp', 'agent', 'blobs'))
 
 /**
  * Fully wired SessionService options for an OMP session root. Construct the

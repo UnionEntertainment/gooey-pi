@@ -104,7 +104,7 @@ function currentPiLeafId(filePath: string): string | null {
   }
   return null
 }
-export const readPiTranscript: TranscriptFileReader = createBranchSummaryTranscriptReader()
+export const readPiTranscript: TranscriptFileReader = createBranchSummaryTranscriptReader(join(homedir(), '.pi', 'agent', 'blobs'))
 
 /**
  * Fully wired SessionService options for a pi session root. Construct the
