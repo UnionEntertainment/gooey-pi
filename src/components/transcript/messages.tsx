@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useId, useRef, useState, type ReactNode } fr
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { HarnessId, MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
+import { splitFileBlock } from '@/lib/file-attachments'
 import { splitCapabilityRouting } from '@/lib/capability-mentions'
 import { routedSessionReferences, splitSessionRouting, type RoutedSessionReference } from '@/lib/session-mentions'
 import { splitTerminalContextBlock } from '@/lib/terminal-context'
@@ -222,7 +223,8 @@ function SessionReferenceText({ text, references, onOpen }: { text: string; refe
 }
 
 function visibleUserText(text: string): string {
-  const terminal = splitTerminalContextBlock(text)
+  const files = splitFileBlock(text)
+  const terminal = splitTerminalContextBlock(files.text)
   const annotations = splitAnnotationBlock(terminal.text)
   const capability = splitCapabilityRouting(annotations.text)
   return splitSessionRouting(capability.text).text
@@ -232,19 +234,26 @@ function UserText({ text, onOpenSessionReference }: { text: string; onOpenSessio
   // Sent prompts can carry verbose model-facing context blocks. Keep both
   // attachments collapsed and capability routing hidden while preserving the
   // user's own message.
-  const terminal = splitTerminalContextBlock(text)
+  const files = splitFileBlock(text)
+  const terminal = splitTerminalContextBlock(files.text)
   const annotations = splitAnnotationBlock(terminal.text)
   const capability = splitCapabilityRouting(annotations.text)
   const sessions = splitSessionRouting(capability.text)
   const references = routedSessionReferences(sessions.block)
-  if (!sessions.block && !capability.block && !annotations.block && !terminal.block) return <InlineText text={text} />
+  if (!sessions.block && !capability.block && !annotations.block && !terminal.block && !files.block) return <InlineText text={text} />
   return (
     <>
-      {sessions.text && sessions.text !== '[Page annotations]' && sessions.text !== '[Terminal selection]' ? <SessionReferenceText text={sessions.text} references={references} onOpen={onOpenSessionReference} /> : null}
+      {sessions.text && sessions.text !== '[Page annotations]' && sessions.text !== '[Terminal selection]' && sessions.text !== '[Attached file]' && sessions.text !== '[Attached files]' && sessions.text !== '[Attached image]' && sessions.text !== '[Attached images]' ? <SessionReferenceText text={sessions.text} references={references} onOpen={onOpenSessionReference} /> : null}
       {annotations.block ? (
         <details className="user-annotations">
           <summary>{annotations.count > 0 ? `${annotations.count} page annotation${annotations.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
           <pre>{annotations.block}</pre>
+        </details>
+      ) : null}
+      {files.block ? (
+        <details className="user-annotations">
+          <summary>{files.count > 0 ? `${files.count} attached file${files.count === 1 ? '' : 's'}` : 'Attached files'}</summary>
+          <pre>{files.block}</pre>
         </details>
       ) : null}
       {terminal.selection ? (

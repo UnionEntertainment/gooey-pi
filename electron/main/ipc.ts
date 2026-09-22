@@ -17,6 +17,7 @@ import type { TerminalService } from './terminal'
 import type { VoiceService } from './voice'
 import type { UpdateService } from './updates'
 import type { AgentBrowserService } from './browser/agent-service'
+import type { SupabaseAuthService } from './supabase-auth'
 import { requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
 
 interface Services {
@@ -40,6 +41,7 @@ interface Services {
   browser: AgentBrowserService
   voice: VoiceService
   pets: PetService
+  supabaseAuth: SupabaseAuthService
   /** OMP-harness counterparts; always constructed, even when the omp CLI is absent. */
   omp: HarnessServices
   /** Pi-harness counterparts; always constructed, even when the pi CLI is absent. */
@@ -256,6 +258,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     return routed.service.followUp(filePath, message, intent)
   })
   handle('sessions:rename', async (_event, filePath, title) => (await sessionsForPath(filePath)).service.rename(filePath, title))
+  handle('sessions:pin', async (_event, filePath, pinned) => (await sessionsForPath(filePath)).service.setPinned(filePath, pinned))
   handle('sessions:archive', async (_event, filePath, archived) => {
     const routed = await sessionsForPath(filePath)
     const result = await routed.service.archive(filePath, archived)
@@ -406,6 +409,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('plugins:set-mcp-enabled', (_event, input, harness) => pluginsFor(requireHarness(harness)).setMcpEnabled(input))
   handle('plugins:mutate-capability', (_event, input, harness) => pluginsFor(requireHarness(harness)).mutateCapability(input))
   handle('plugins:refresh', (_event, harness) => pluginsFor(requireHarness(harness)).refresh())
+  handle('plugins:supabase-login-start', (_event, tokenName) => services.supabaseAuth.startLogin(tokenName))
+  handle('plugins:supabase-login-complete', (_event, sessionId, code) => services.supabaseAuth.completeLogin(sessionId, code))
+  handle('plugins:supabase-projects', (_event, token) => services.supabaseAuth.listProjects(token))
 
   handle('settings:get', () => services.settings.get())
   handle('settings:update', async (_event, patch) => {

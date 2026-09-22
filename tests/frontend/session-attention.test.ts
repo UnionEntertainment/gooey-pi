@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityNotificationSignature, applySessionLifecycleEvent, readClearedActivity, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification, signatureCleared } from '../../src/app/session-attention'
+import { activityNotificationSignature, applySessionLifecycleEvent, readClearedActivity, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification, sessionSystemNotification, signatureCleared } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
 import type { SessionRecord } from '../../src/types/api'
 
@@ -94,6 +94,16 @@ describe('session lifecycle attention', () => {
     const completed = applySessionLifecycleEvent(running, { type: 'compaction_end', reason: 'manual', willRetry: false }, true, 2)
     expect(running.status).toBe('running')
     expect(completed).toMatchObject({ status: 'complete', unread: false, eventRevision: 2 })
+  })
+
+  it('describes a settled session for the system banner exactly once per revision', () => {
+    const completed = { ...session(), status: 'complete' as const, eventRevision: 3 }
+    expect(sessionSystemNotification(completed)).toEqual({ signature: 'complete:3', title: 'Session', body: 'Finished' })
+    expect(sessionSystemNotification({ ...session(), status: 'waiting', eventRevision: 7 })?.body).toBe('Waiting for input')
+    expect(sessionSystemNotification({ ...session(), status: 'failed', eventRevision: 2 })?.body).toBe('Failed')
+    expect(sessionSystemNotification({ ...session(), status: 'running' })).toBeUndefined()
+    expect(sessionSystemNotification({ ...completed, archived: true })).toBeUndefined()
+    expect(sessionSystemNotification(session())).toBeUndefined()
   })
 })
 

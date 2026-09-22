@@ -1,11 +1,11 @@
 /* Transcript */
 .transcript { position: absolute; inset: 0; overflow-y: auto; padding: 30px 0 170px; }
-.transcript.has-pinned-changes { padding-bottom: 245px; }
-.transcript.has-docked-changes { padding-bottom: 250px; }
+.transcript.has-pinned-changes { padding-bottom: 215px; }
+.transcript.has-docked-changes { padding-bottom: 220px; }
 .transcript.has-queued-messages { padding-bottom: 325px; }
-.transcript.has-docked-changes.has-queued-messages { padding-bottom: 405px; }
+.transcript.has-docked-changes.has-queued-messages { padding-bottom: 375px; }
 .transcript-changes-pin { z-index: 9; bottom: 137px; animation: popover-in 180ms cubic-bezier(.32,.72,0,1); }
-.conversation-pane .changes-card { margin: 0; box-shadow: 0 4px 18px color-mix(in srgb, #000 12%, transparent); }
+.conversation-pane .changes-card { box-shadow: 0 3px 14px color-mix(in srgb, #000 11%, transparent); }
 .transcript__inner { min-height: 100%; padding: 0 24px; }
 .transcript__show-earlier { min-height: 30px; display: block; margin: 16px auto 26px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-secondary); background: var(--surface-raised); font-size: 11px; transition: color 130ms ease-out, background 130ms ease-out, border-color 130ms ease-out; }
 .transcript__show-earlier:hover { color: var(--text); background: var(--surface-hover); }
@@ -130,15 +130,14 @@
 .image-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .message--activity { margin: 3px 0 18px 38px; }
 .message--activity .work-timeline { padding: 0; }
-.changes-card { width: 100%; min-height: 57px; display: flex; align-items: center; gap: 7px; margin: 12px 0 9px; padding: 9px 7px 9px 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-raised); text-align: left; transition: background 130ms ease-out, border-color 130ms ease-out; }
-.changes-card__open { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; padding: 0; color: inherit; background: transparent; text-align: left; }
+.changes-card { width: fit-content; height: 30px; display: flex; align-items: center; gap: 4px; margin: 0 auto; padding: 0 5px 0 12px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); background: var(--surface-raised); font-size: 11px; transition: background 130ms ease-out, border-color 130ms ease-out; }
+.changes-card__open { display: flex; align-items: center; gap: 7px; padding: 0; color: inherit; background: transparent; white-space: nowrap; }
+.changes-card__open > svg { color: var(--success); }
+.changes-card__open strong { font-weight: 560; }
+.changes-card__diff { display: inline-flex; gap: 3px; }
 .changes-card:hover { background: var(--surface-subtle); border-color: var(--border-strong); }
-.changes-card__open:hover { color: var(--text); }
-.changes-card__icon { width: 32px; height: 32px; display: grid; flex: 0 0 32px; place-items: center; border-radius: 7px; color: var(--success); background: var(--success-soft); }
-.changes-card__text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-.changes-card__text strong { font-size: 12.5px; font-weight: 560; }
-.changes-card__text small { color: var(--text-tertiary); font-size: 10.5px; }
-.changes-card__close { width: 28px; height: 28px; display: grid; flex: 0 0 28px; place-items: center; padding: 0; border-radius: 6px; color: var(--text-tertiary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
+.changes-card__close { position: relative; width: 20px; height: 20px; display: grid; flex: 0 0 20px; place-items: center; padding: 0; border-radius: 50%; color: var(--text-tertiary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
+.changes-card__close::before { content: ""; position: absolute; inset: -4px; }
 .changes-card__close:hover { color: var(--text); background: var(--surface-hover); }
 .diff-count { padding: 1px 5px; border-radius: 4px; font: 10.5px/1.5 "SFMono-Regular", Menlo, monospace; }
 .diff-count--add { color: var(--success); background: var(--diff-add); }

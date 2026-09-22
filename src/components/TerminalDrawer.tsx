@@ -75,8 +75,8 @@ const terminalTheme = (): ITheme => {
   return {
     background: read('--terminal-bg', '#ffffff'),
     foreground: read('--terminal-text', '#20201e'),
-    cursor: read('--prime', '#6b55e8'),
-    selectionBackground: read('--terminal-selection', '#c8beff99'),
+    cursor: read('--prime', '#b04a0c'),
+    selectionBackground: read('--terminal-selection', '#f5c9a899'),
     black: read('--terminal-black', '#242423'),
     red: read('--terminal-red', '#b42318'),
     green: read('--terminal-green', '#18794e'),

@@ -39,6 +39,7 @@ const annotations: BrowserAnnotationsApi = {
   add: vi.fn(() => false),
   remove: vi.fn(),
   clear: vi.fn(),
+  restore: vi.fn(),
   handleNavigation: vi.fn(),
   sendSignal: 0,
   requestSend: vi.fn(),

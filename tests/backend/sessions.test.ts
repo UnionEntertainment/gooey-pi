@@ -18,14 +18,14 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 function setup(
   maxSessionFiles?: number,
   options?: SessionServiceOptions,
-): { root: string; project: string; service: SessionService; store: JsonStateStore } {
+): { root: string; project: string; service: SessionService; store: JsonStateStore; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
   const service = new SessionService(store, null, maxSessionFiles, options)
   Object.defineProperty(service, 'sessionRoot', { value: root })
-  return { root, project, service, store }
+  return { root, project, service, store, dir }
 }
 
 function writeSession(path: string, project: string, id: string, timestamp = '2025-01-01T00:00:00.000Z'): void {
@@ -1259,6 +1259,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     await expect(service.archive(file, false)).resolves.toBe(true)
     expect(stop).toHaveBeenCalledTimes(1)
     expect((await service.list())[0]?.archived).toBe(false)
+  })
+
+  it('persists pinned sessions across service instances', async () => {
+    const { root, project, service, dir } = setup()
+    const file = join(root, 'pinned.jsonl')
+    writeSession(file, project, 'pinned')
+
+    expect((await service.list())[0]?.pinned).toBe(false)
+    await expect(service.setPinned(file)).resolves.toBe(true)
+    expect((await service.list())[0]?.pinned).toBe(true)
+
+    const reloaded = new SessionService(new JsonStateStore(join(dir, 'state.json')), null)
+    Object.defineProperty(reloaded, 'sessionRoot', { value: root })
+    expect((await reloaded.list())[0]?.pinned).toBe(true)
+
+    await expect(service.setPinned(file, false)).resolves.toBe(true)
+    expect((await service.list())[0]?.pinned).toBe(false)
   })
 
   it('calls renameFile only when the runtime hook returns false and the CLI path is null', async () => {

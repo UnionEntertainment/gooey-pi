@@ -453,4 +453,66 @@ describe('PluginsPage bundled capability controls', () => {
     expect(setMcpEnabled).not.toHaveBeenCalled()
     expect(mutateCapability).not.toHaveBeenCalled()
   })
+
+  it('connects a Supabase account through browser authorization into a local stdio MCP server', async () => {
+    const connectMcp = vi.fn(async () => ({ ok: true, output: 'Saved MCP server definition “supabase-acme-corp”.' }))
+    const refresh = vi.fn(async () => undefined)
+    const loginStart = vi.fn(async () => ({ sessionId: 'session-1', url: 'https://supabase.com/dashboard/cli/login?session_id=session-1' }))
+    const loginComplete = vi.fn(async () => ({ token: 'sbp_decrypted_token' }))
+    const listProjects = vi.fn(async () => [{ ref: 'abcdefghijklmnop', name: 'gustopick' }, { ref: 'qrstuvwxyzabcdef', name: 'staging' }])
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="omp" skills={[]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
+        onSetMcpSupport={async () => ({ ok: true, output: '' })}
+        onConnectMcp={connectMcp}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })}
+        onSupabaseLoginStart={loginStart}
+        onSupabaseLoginComplete={loginComplete}
+        onSupabaseListProjects={listProjects}
+      />)
+    })
+
+    await act(async () => { container.querySelector<HTMLButtonElement>('.featured-capability')!.click() })
+    await act(async () => { [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Connect account'))!.click() })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    const labelInput = dialog.querySelector<HTMLInputElement>('input')!
+    await act(async () => { changeInput(labelInput, 'Acme Corp') })
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Continue in browser')!.click(); await Promise.resolve(); await Promise.resolve() })
+
+    expect(loginStart).toHaveBeenCalledWith('Acme Corp')
+    expect(connectMcp).not.toHaveBeenCalled()
+
+    const codeInput = document.body.querySelector<HTMLElement>('[role="dialog"]')!.querySelector<HTMLInputElement>('input')!
+    await act(async () => { changeInput(codeInput, '123456') })
+    await act(async () => { [...document.body.querySelector<HTMLElement>('[role="dialog"]')!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Verify and continue')!.click(); await Promise.resolve(); await Promise.resolve() })
+
+    expect(loginComplete).toHaveBeenCalledWith('session-1', '123456')
+    expect(listProjects).toHaveBeenCalledWith('sbp_decrypted_token')
+    expect(connectMcp).not.toHaveBeenCalled()
+
+    const projectDialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    const select = projectDialog.querySelector<HTMLSelectElement>('select')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'abcdefghijklmnop')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => { [...projectDialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Connect')!.click(); await Promise.resolve(); await Promise.resolve() })
+
+    expect(connectMcp).toHaveBeenCalledWith({
+      name: 'supabase-acme-corp',
+      scope: 'user',
+      projectPath: undefined,
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@supabase/mcp-server-supabase', '--project-ref', 'abcdefghijklmnop', '--read-only'],
+      env: { SUPABASE_ACCESS_TOKEN: 'sbp_decrypted_token' },
+    })
+    expect(refresh).toHaveBeenCalled()
+  })
 })

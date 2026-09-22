@@ -67,6 +67,7 @@ const api: PrimeWorkApi = {
     followUp: (filePath, message, intent) => invoke('sessions:follow-up', filePath, message, intent),
     rename: (filePath, title) => invoke('sessions:rename', filePath, title),
     archive: (filePath, archived) => invoke('sessions:archive', filePath, archived),
+    setPinned: (filePath, pinned) => invoke('sessions:pin', filePath, pinned),
     onChanged: (callback) => subscribe<SessionChangeEvent>('sessions:changed', callback),
   },
   agent: {
@@ -131,6 +132,9 @@ const api: PrimeWorkApi = {
     setMcpEnabled: (input, harness) => invoke('plugins:set-mcp-enabled', input, harness),
     mutateCapability: (input, harness) => invoke('plugins:mutate-capability', input, harness),
     refresh: (harness) => invoke('plugins:refresh', harness),
+    startSupabaseLogin: (tokenName) => invoke('plugins:supabase-login-start', tokenName),
+    completeSupabaseLogin: (sessionId, code) => invoke('plugins:supabase-login-complete', sessionId, code),
+    listSupabaseProjects: (token) => invoke('plugins:supabase-projects', token),
   },
   settings: {
     get: () => invoke('settings:get'),

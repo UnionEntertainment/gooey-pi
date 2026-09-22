@@ -322,7 +322,7 @@ export type McpConnectionInput = {
   projectPath?: string
 } & (
   | { type: 'http'; url: string; auth?: 'none' | 'oauth' | 'bearer'; bearerTokenEnvVar?: string }
-  | { type: 'stdio'; command: string; args?: string[] }
+  | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
 )
 
 export interface McpStateInput {
@@ -815,6 +815,7 @@ export interface PrimeWorkApi {
     followUp(filePath: string, message: string, intent?: PromptDeliveryIntent): Promise<boolean>
     rename(filePath: string, title: string): Promise<boolean>
     archive(filePath: string, archived?: boolean): Promise<boolean>
+    setPinned(filePath: string, pinned?: boolean): Promise<boolean>
     onChanged(callback: (event: SessionChangeEvent) => void): () => void
   }
   agent: {
@@ -870,6 +871,9 @@ export interface PrimeWorkApi {
     setMcpEnabled(input: McpStateInput, harness?: HarnessId): Promise<ProcessOutcome>
     mutateCapability(input: CapabilityMutationInput, harness?: HarnessId): Promise<ProcessOutcome>
     refresh(harness?: HarnessId): Promise<PluginCatalog>
+    startSupabaseLogin(tokenName?: string): Promise<{ sessionId: string; url: string }>
+    completeSupabaseLogin(sessionId: string, code: string): Promise<{ token: string }>
+    listSupabaseProjects(token: string): Promise<{ ref: string; name: string }[]>
   }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
   browser: {

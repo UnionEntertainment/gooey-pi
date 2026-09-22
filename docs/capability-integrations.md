@@ -100,7 +100,14 @@ API remain visible but non-actionable, with direct-harness management detail.
 - Every install/remove command uses the detected fixed harness executable and
   an argv array; no shell interpolation is permitted.
 - Package, plugin, server, command, and argument inputs are bounded and
-  validated in the main process.
+  validated in the main process. Stdio definitions may carry a bounded `env`
+  map (up to 32 variables, 128-character names, 4,096-character values), which
+  is how per-connection credentials such as Supabase access tokens reach the
+  server process without appearing in its argument list. The Supabase
+  connection flow authorizes tokens in the browser using the same ECDH +
+  verification-code exchange as `supabase login`; the decrypted token is
+  written only into the harness `mcp.json` `env` block and is never persisted
+  in GooeyPi state.
 - Standalone extensions must be absolute local JavaScript or TypeScript files.
   Project installs are re-authorized and their destination directories remain
   pinned against symlink replacement; existing OMP extension files are never

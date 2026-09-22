@@ -25,6 +25,7 @@
 .settings-toggle input:checked + i span { transform: translateX(14px); }
 .settings-toggle input:focus-visible + i { outline: 2px solid var(--focus); outline-offset: 2px; }
 .settings-row select, .settings-row input, .field input, .field textarea, .field select { height: 32px; min-width: 180px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 7px; outline: 0; background: var(--surface-raised); font-size: 11.5px; transition: border-color 140ms ease-out, box-shadow 140ms ease-out; }
+.field input:focus-visible, .field textarea:focus-visible, .field select:focus-visible { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 24%, transparent); }
 .settings-row--stack { align-items: flex-start; flex-direction: column; gap: 9px; padding: 13px 0; }
 .settings-row--stack input { width: 100%; }
 .settings-group > h2 { display: flex; align-items: center; gap: 6px; }

@@ -18,13 +18,13 @@ import {
   PackageOpen,
   PanelLeftClose,
   Pin,
-  MoreHorizontal,
   Search,
   Settings,
   SquarePen,
   Trash2,
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { PROJECT_SORT_MODES, type AppMeta, type AppUpdateState, type HarnessId, type ProjectRecord, type ProjectSortMode, type SessionRecord, type WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -32,7 +32,7 @@ import { sortProjects } from '@/lib/project-order'
 import { useI18n, type MessageKey } from '@/lib/i18n'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { sessionAttentionSignature, signatureCleared } from '@/app/session-attention'
-import { IconButton, Modal, OmpMark, PiMark, PrimeMark, useFocusTrap } from './ui'
+import { IconButton, Modal, OmpMark, PiMark, PrimeMark, Toast, useFocusTrap } from './ui'
 
 const PROJECT_SORT_LABEL_KEYS = { recent: 'projects.sort.recent', alphabetical: 'projects.sort.alphabetical' } as const satisfies Record<ProjectSortMode, MessageKey>
 
@@ -57,6 +57,7 @@ export interface SidebarProps {
   projectSortMode?: ProjectSortMode
   onSetProjectSortMode?(mode: ProjectSortMode): void
   onTogglePinProject?(project: ProjectRecord): void
+  onTogglePinSession?(session: SessionRecord): void
   onClose(): void
   onOpenPalette(): void
   onRenameSession(session: SessionRecord, title: string): Promise<void>
@@ -65,8 +66,83 @@ export interface SidebarProps {
   platform?: NodeJS.Platform
 }
 
-const statusLabel: Record<SessionRecord['status'], string> = {
-  idle: 'Idle', running: 'Running', waiting: 'Waiting for input', complete: 'Finished', failed: 'Failed', unknown: 'Unknown',
+const STATUS_LABEL_KEYS = {
+  idle: 'session.status.idle', running: 'session.status.running', waiting: 'session.status.waiting',
+  complete: 'session.status.complete', failed: 'session.status.failed', unknown: 'session.status.unknown',
+} as const satisfies Record<SessionRecord['status'], MessageKey>
+
+const STATUS_META_KEYS = {
+  running: 'session.meta.running', waiting: 'session.meta.waiting',
+  complete: 'session.meta.complete', failed: 'session.meta.failed',
+} as const satisfies Partial<Record<SessionRecord['status'], MessageKey>>
+
+const HOVER_CARD_DELAY_MS = 400
+const HOVER_CARD_WIDTH = 264
+
+/** Menus are popovers: pointerdown outside dismisses, Escape dismisses without
+ *  reaching overlay-level handlers, and focus returns to the trigger. */
+function usePopoverDismiss(open: boolean, stayInside: string, onClose: () => void, returnFocus?: () => void) {
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const returnFocusRef = useRef(returnFocus)
+  returnFocusRef.current = returnFocus
+  useEffect(() => {
+    if (!open) return
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(stayInside)) closeRef.current()
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeRef.current()
+      returnFocusRef.current?.()
+    }
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('keydown', dismissOnEscape, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true)
+      document.removeEventListener('keydown', dismissOnEscape, true)
+    }
+  }, [open, stayInside])
+}
+
+/** Arrow-key navigation for role="menu" popovers; Tab still passes through. */
+function menuKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return
+  const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')]
+  if (!items.length) return
+  event.preventDefault()
+  const index = items.indexOf(document.activeElement as HTMLElement)
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? items.length - 1
+    : event.key === 'ArrowDown' ? (index + 1) % items.length
+    : (index - 1 + items.length) % items.length
+  items[next].focus()
+}
+
+/** Focus lands inside the menu so keyboard users can arrow immediately. */
+function focusMenuItem(menu: HTMLElement | null) {
+  menu?.querySelector<HTMLElement>('[aria-checked="true"], [role="menuitem"], [role="menuitemradio"]')?.focus()
+}
+
+interface OpenMenu {
+  id: string
+  returnFocus: HTMLElement | null
+}
+
+
+function formatSessionDateTime(value?: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
 }
 
 export const SIDEBAR_SESSION_LIMIT = 7
@@ -97,6 +173,8 @@ export function indexSidebarSessions(
     for (const projectId of owners.get(session.projectPath) ?? []) sessionsByProject.get(projectId)?.push(session)
   }
   const compareByLastUserMessage = (left: SessionRecord, right: SessionRecord) => {
+    const pinnedOrder = Number(right.pinned ?? false) - Number(left.pinned ?? false)
+    if (pinnedOrder) return pinnedOrder
     const difference = Date.parse(right.lastUserMessageAt ?? right.createdAt) - Date.parse(left.lastUserMessageAt ?? left.createdAt)
     return difference || right.createdAt.localeCompare(left.createdAt) || left.filePath.localeCompare(right.filePath)
   }
@@ -109,12 +187,12 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
   return sessions.slice(0, SIDEBAR_SESSION_LIMIT)
 }
 
-
 function SessionStatusMark({ status, attention }: { status: SessionRecord['status']; attention: boolean }) {
-  const title = status === 'failed' && !attention ? 'Failed — notification cleared' : statusLabel[status]
-  if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={statusLabel[status]}><LoaderCircle className="spin" size={13} /></span>
-  if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={statusLabel[status]}><MessageCircleQuestion size={12} /></span>
-  if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={statusLabel[status]}><CheckCircle2 size={12} /></span>
+  const { t } = useI18n()
+  const title = status === 'failed' && !attention ? t('session.status.failedCleared') : t(STATUS_LABEL_KEYS[status])
+  if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={title}><LoaderCircle className="spin" size={13} /></span>
+  if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={title}><MessageCircleQuestion size={12} /></span>
+  if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={title}><CheckCircle2 size={12} /></span>
   return <span className={`session-status-mark session-status-mark--${status}`} title={title}><span /></span>
 }
 
@@ -184,21 +262,34 @@ async function copySessionUuid(id: string): Promise<void> {
   input.remove()
   if (!copied) throw new Error('Copy is unavailable')
 }
-
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, updateState = { phase: 'unsupported' }, onUpdateAction, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, projectSortMode = 'recent', onSetProjectSortMode = () => undefined, onTogglePinProject = () => undefined, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false, platform = 'darwin' }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, updateState = { phase: 'unsupported' }, onUpdateAction, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, projectSortMode = 'recent', onSetProjectSortMode = () => undefined, onTogglePinProject = () => undefined, onTogglePinSession = () => undefined, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false, platform = 'darwin' }: SidebarProps) {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [searchOpen, setSearchOpen] = useState(false)
   const sidebarRef = useFocusTrap<HTMLElement>(overlay, onClose)
-  const [projectMenu, setProjectMenu] = useState<string | null>(null)
+  const [projectMenu, setProjectMenu] = useState<OpenMenu | null>(null)
   const [projectSortMenuOpen, setProjectSortMenuOpen] = useState(false)
-  const [sessionMenu, setSessionMenu] = useState<string | null>(null)
+  const [sessionMenu, setSessionMenu] = useState<OpenMenu | null>(null)
   const [renameTarget, setRenameTarget] = useState<SessionRecord | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
   const [removeTarget, setRemoveTarget] = useState<ProjectRecord | null>(null)
+  const [sessionHover, setSessionHover] = useState<{ session: SessionRecord; top: number; left: number } | null>(null)
+  const hoverTimerRef = useRef<number | undefined>(undefined)
+  const clearSessionHover = () => {
+    window.clearTimeout(hoverTimerRef.current)
+    setSessionHover(null)
+  }
+  const scheduleSessionHover = (session: SessionRecord, event: MouseEvent<HTMLElement> | { currentTarget: HTMLElement }) => {
+    window.clearTimeout(hoverTimerRef.current)
+    const rect = event.currentTarget.getBoundingClientRect()
+    hoverTimerRef.current = window.setTimeout(() => {
+      setSessionHover({ session, top: Math.min(rect.top, Math.max(8, window.innerHeight - 300)), left: Math.min(rect.right + 10, Math.max(8, window.innerWidth - HOVER_CARD_WIDTH - 8)) })
+    }, HOVER_CARD_DELAY_MS)
+  }
+  useEffect(() => () => window.clearTimeout(hoverTimerRef.current), [])
   const [confirmUpdate, setConfirmUpdate] = useState(false)
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
@@ -215,43 +306,17 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const updateBusy = updateState.phase === 'checking' || updateState.phase === 'downloading'
   const updateIndeterminate = updateState.phase === 'downloading' && updateState.percent === undefined
   const updateVisible = updateState.phase === 'available' || updateState.phase === 'downloading' || updateState.phase === 'downloaded' || updateState.phase === 'error'
-  useEffect(() => {
-    if (!harnessMenuOpen) return
-    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.brand-switcher')) setHarnessMenuOpen(false) }
-    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setHarnessMenuOpen(false) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
-  }, [harnessMenuOpen])
-  useEffect(() => {
-    if (!projectMenu) return
-    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.project-group')) setProjectMenu(null) }
-    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setProjectMenu(null) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
-  }, [projectMenu])
-  useEffect(() => {
-    if (!projectSortMenuOpen) return
-    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.sidebar__sort-menu, .sidebar__sort-toggle')) setProjectSortMenuOpen(false) }
-    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setProjectSortMenuOpen(false) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
-  }, [projectSortMenuOpen])
-  useEffect(() => {
-    if (!sessionMenu) return
-    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.session-row-wrap')) setSessionMenu(null) }
-    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setSessionMenu(null) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
-  }, [sessionMenu])
-  useEffect(() => {
-    if (!archiveTarget) return
-    const dismiss = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('[data-archive-confirming="true"]')) setArchiveTarget(null)
-    }
-    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setArchiveTarget(null) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
-  }, [archiveTarget])
+  const [toast, setToast] = useState<string | null>(null)
+  const focusBrandTrigger = () => sidebarRef.current?.querySelector<HTMLElement>('.brand-switcher__trigger')?.focus()
+  const focusSortToggle = () => sidebarRef.current?.querySelector<HTMLElement>('.sidebar__sort-toggle')?.focus()
+  const closeProjectMenu = () => { projectMenu?.returnFocus?.focus(); setProjectMenu(null) }
+  const closeSessionMenu = () => { sessionMenu?.returnFocus?.focus(); setSessionMenu(null) }
+  usePopoverDismiss(harnessMenuOpen, '.brand-switcher', () => setHarnessMenuOpen(false), focusBrandTrigger)
+  usePopoverDismiss(projectMenu !== null, '.project-group', () => setProjectMenu(null), () => projectMenu?.returnFocus?.focus())
+  usePopoverDismiss(projectSortMenuOpen, '.sidebar__sort-menu, .sidebar__sort-toggle', () => setProjectSortMenuOpen(false), focusSortToggle)
+  usePopoverDismiss(sessionMenu !== null, '.session-row-wrap', () => setSessionMenu(null), () => sessionMenu?.returnFocus?.focus())
+  usePopoverDismiss(archiveTarget !== null, '[data-archive-confirming="true"]', () => setArchiveTarget(null))
+  const sessionMeta = (session: SessionRecord) => session.status in STATUS_META_KEYS ? t(STATUS_META_KEYS[session.status as keyof typeof STATUS_META_KEYS]) : formatRelative(session.updatedAt)
   const normalized = query.trim().toLowerCase()
   const visibleProjects = useMemo(() => sortProjects(projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || (sessionsByProject.get(project.id) ?? []).some((session) => `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), projectSortMode), [projects, sessionsByProject, normalized, projectSortMode])
 
@@ -274,7 +339,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
             <ChevronDown size={12} aria-hidden="true" />
           </button>
           {harnessMenuOpen ? (
-            <div className="brand-switcher__menu" role="menu" aria-label="Harness">
+            <div className="brand-switcher__menu" role="menu" aria-label="Harness" ref={focusMenuItem} onKeyDown={menuKeyDown}>
               {HARNESS_SELECTOR_ORDER.filter((harness) => Boolean(harnesses?.[harness]?.path)).map((harness) => (
                   <button
                     type="button"
@@ -282,7 +347,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                     role="menuitemradio"
                     aria-checked={harness === activeHarness}
                     className={harness === activeHarness ? 'is-active' : ''}
-                    onClick={() => { setHarnessMenuOpen(false); if (harness !== activeHarness) onSelectHarness?.(harness) }}
+                    onClick={() => { setHarnessMenuOpen(false); focusBrandTrigger(); if (harness !== activeHarness) onSelectHarness?.(harness) }}
                   >
                     <HarnessMark harness={harness} size={20} />
                     <span className="brand-switcher__option"><strong>{HARNESS_PRODUCT_NAMES[harness]}</strong></span>
@@ -314,9 +379,9 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         <button type="button" title={t('nav.capabilities')} className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>{t('nav.capabilities')}</span></button>
       </nav>
 
-      <div className="sidebar__scroll scroll-area">
-        <div className="sidebar__section-heading"><span>Projects</span><span className="sidebar__section-heading-actions"><IconButton size="small" className="sidebar__sort-toggle" aria-haspopup="menu" aria-expanded={projectSortMenuOpen} label={t('projects.sort')} onClick={() => setProjectSortMenuOpen((open) => !open)}><ListFilter size={13} /></IconButton><IconButton size="small" label="Add project" onClick={onAddProject}><FolderPlus size={13} /></IconButton>{projectSortMenuOpen ? <div className="sidebar__sort-menu" role="menu" aria-label={t('projects.sort.menu')}>{PROJECT_SORT_MODES.map((mode) => <button key={mode} type="button" role="menuitemradio" aria-checked={projectSortMode === mode} className={projectSortMode === mode ? 'is-active' : ''} onClick={() => { setProjectSortMenuOpen(false); onSetProjectSortMode(mode) }}>{t(PROJECT_SORT_LABEL_KEYS[mode])}{projectSortMode === mode ? <Check size={12} aria-hidden="true" /> : null}</button>)}</div> : null}</span></div>
-        {visibleProjects.length === 0 ? <p className="sidebar__empty">No matching work</p> : null}
+      <div className="sidebar__scroll scroll-area" onScroll={clearSessionHover}>
+        <div className="sidebar__section-heading"><span>Projects</span><span className="sidebar__section-heading-actions"><IconButton size="small" className="sidebar__sort-toggle" aria-haspopup="menu" aria-expanded={projectSortMenuOpen} label={t('projects.sort')} onClick={() => setProjectSortMenuOpen((open) => !open)}><ListFilter size={13} /></IconButton><IconButton size="small" label="Add project" onClick={onAddProject}><FolderPlus size={13} /></IconButton>{projectSortMenuOpen ? <div className="sidebar__sort-menu" role="menu" aria-label={t('projects.sort.menu')} ref={focusMenuItem} onKeyDown={menuKeyDown}>{PROJECT_SORT_MODES.map((mode) => <button key={mode} type="button" role="menuitemradio" aria-checked={projectSortMode === mode} className={projectSortMode === mode ? 'is-active' : ''} onClick={() => { setProjectSortMenuOpen(false); focusSortToggle(); onSetProjectSortMode(mode) }}>{t(PROJECT_SORT_LABEL_KEYS[mode])}{projectSortMode === mode ? <Check size={12} aria-hidden="true" /> : null}</button>)}</div> : null}</span></div>
+        {visibleProjects.length === 0 ? <p className="sidebar__empty">{normalized ? t('sidebar.empty.filtered') : t('sidebar.empty.none')}</p> : null}
         {visibleProjects.map((project) => {
           const projectSessions = (sessionsByProject.get(project.id) ?? []).filter((session) => !normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized))
           const isCollapsed = collapsed[project.id] ?? false
@@ -325,27 +390,27 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
             <div className="project-group" key={project.id}>
               <div
                 className={`project-row ${activeProjectId === project.id && activeView === 'session' ? 'is-selected' : ''}`}
-                onContextMenu={(event) => { event.preventDefault(); setProjectMenu(project.id) }}
+                onContextMenu={(event) => { event.preventDefault(); setProjectMenu({ id: project.id, returnFocus: event.currentTarget.querySelector('.project-row__main') }) }}
               >
-                <button className="project-row__collapse" type="button" aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${project.name}`} title={`${isCollapsed ? 'Expand' : 'Collapse'} ${project.name}`} onClick={() => { setProjectMenu(null); setCollapsed((value) => ({ ...value, [project.id]: !isCollapsed })) }}>
+                <button className="project-row__collapse" type="button" aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${project.name}`} title={`${isCollapsed ? 'Expand' : 'Collapse'} ${project.name}`} onClick={() => { closeProjectMenu(); setCollapsed((value) => ({ ...value, [project.id]: !isCollapsed })) }}>
                   {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                 </button>
-                <button className="project-row__main" type="button" onClick={() => { setProjectMenu(null); onSelectProject(project) }} title={project.path}>
+                <button className="project-row__main" type="button" onClick={() => { closeProjectMenu(); onSelectProject(project) }} title={project.path}>
                   {activeProjectId === project.id ? <FolderOpen size={14} /> : <Folder size={14} />}
                   <span>{project.name}</span>
                   {project.pinned ? <Pin className="project-row__pin" size={11} fill="currentColor" /> : null}
                 </button>
-                <IconButton size="small" className="project-row__new-session row-action" label={`New session in ${project.name}`} onClick={() => { setProjectMenu(null); onNewSession(project) }}><NotebookPen size={13} /></IconButton>
+                <IconButton size="small" className="project-row__new-session row-action" label={`New session in ${project.name}`} onClick={() => { closeProjectMenu(); onNewSession(project) }}><NotebookPen size={13} /></IconButton>
                 {running ? <span className="project-working" title="Agent working"><LoaderCircle className="spin" size={13} /></span> : null}
-                {projectMenu === project.id ? <div className="project-row__menu" role="menu" aria-label={`Project options for ${project.name}`}>{!project.inferred ? <button type="button" role="menuitem" onClick={() => { setProjectMenu(null); onTogglePinProject(project) }}><Pin size={12} /> {t(project.pinned ? 'projects.unpin' : 'projects.pin')}</button> : null}<button type="button" role="menuitem" onClick={() => { setProjectMenu(null); setRemoveTarget(project) }}><Trash2 size={12} /> Remove project</button></div> : null}
+                {projectMenu?.id === project.id ? <div className="project-row__menu" role="menu" aria-label={`Project options for ${project.name}`} ref={focusMenuItem} onKeyDown={menuKeyDown}>{!project.inferred ? <button type="button" role="menuitem" onClick={() => { closeProjectMenu(); onTogglePinProject(project) }}><Pin size={12} /> {t(project.pinned ? 'projects.unpin' : 'projects.pin')}</button> : null}<button type="button" role="menuitem" onClick={() => { closeProjectMenu(); setRemoveTarget(project) }}><Trash2 size={12} /> Remove project</button></div> : null}
               </div>
               {!isCollapsed ? (
                 <div className="session-list">
                   {boundedSidebarSessions(projectSessions).map((session) => (
-                    <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
-                      <button type="button" title={session.title} className="session-row" onClick={() => { setSessionMenu(null); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
+                    <div key={session.id} className={`session-row-wrap ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
+                      <button type="button" className="session-row" aria-describedby={sessionHover?.session.id === session.id ? 'session-hover-card' : undefined} onClick={() => { closeSessionMenu(); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); clearSessionHover(); setSessionMenu({ id: session.id, returnFocus: event.currentTarget }) }} onMouseEnter={(event) => scheduleSessionHover(session, event)} onMouseLeave={clearSessionHover} onFocus={(event) => scheduleSessionHover(session, event)} onBlur={clearSessionHover}>
                         <SessionStatusMark status={session.status} attention={needsAttention(session)} />
-                        <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
+                        <span className="session-row__text"><span className="session-row__heading"><span className="session-row__title">{session.title}</span>{session.pinned ? <Pin className="session-row__pin" size={10} fill="currentColor" aria-hidden="true" /> : null}</span><span className="session-row__meta">{sessionMeta(session)}</span></span>
                       </button>
                       <IconButton
                         size="small"
@@ -353,17 +418,16 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                         label={archiveTarget?.id === session.id ? `Confirm archive ${session.title}` : `Archive ${session.title}`}
                         data-archive-confirming={archiveTarget?.id === session.id}
                         onClick={() => {
-                          setSessionMenu(null)
+                          closeSessionMenu()
                           if (archiveTarget?.id !== session.id) { setArchiveTarget(session); return }
                           setArchiveTarget(null)
                           void onArchiveSession(session)
                         }}
                       >{archiveTarget?.id === session.id ? <Check size={13} /> : <Archive size={13}/>}</IconButton>
-                      <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
-                      {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { void copySessionUuid(session.id); setSessionMenu(null) }}><Copy size={12}/> Copy session UUID</button><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
+                      {sessionMenu?.id === session.id ? <div className="session-row__menu" role="menu" aria-label="Session options" ref={focusMenuItem} onKeyDown={menuKeyDown}><button type="button" role="menuitem" onClick={() => { closeSessionMenu(); onTogglePinSession(session) }}><Pin size={12}/> {t(session.pinned ? 'sessions.unpin' : 'sessions.pin')}</button><button type="button" role="menuitem" onClick={() => { closeSessionMenu(); void copySessionUuid(session.id).then(() => setToast(t('sidebar.copied')), () => setToast(t('sidebar.copyFailed'))) }}><Copy size={12}/> Copy session UUID</button><button type="button" role="menuitem" onClick={() => { closeSessionMenu(); setRenameTarget(session); setRenameValue(session.title) }}><SquarePen size={12}/> Rename</button></div> : null}
                     </div>
                   ))}
-                  {projectSessions.length === 0 ? <button type="button" title={`New session in ${project.name}`} className="session-row session-row--empty" onClick={() => { setProjectMenu(null); onNewSession(project) }}><NotebookPen size={12} /> New session</button> : null}
+                  {projectSessions.length === 0 ? <button type="button" title={`New session in ${project.name}`} className="session-row session-row--empty" onClick={() => { closeProjectMenu(); onNewSession(project) }}><NotebookPen size={12} /> New session</button> : null}
                 </div>
               ) : null}
             </div>
@@ -394,6 +458,21 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}
       {removeTarget ? <Modal title="Remove project" onClose={() => setRemoveTarget(null)} footer={<><button type="button" className="button" onClick={() => setRemoveTarget(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => { const target = removeTarget; setRemoveTarget(null); onRemoveProject(target) }}>Remove</button></>}><p>Remove “{removeTarget.name}” from {HARNESS_PRODUCT_NAMES[activeHarness]}? The folder and saved sessions will not be deleted.</p></Modal> : null}
       {confirmUpdate ? <Modal title={updateConfirm.title} onClose={() => setConfirmUpdate(false)} footer={<><button type="button" className="button" onClick={() => setConfirmUpdate(false)}>No</button><button type="button" className="button button--primary" onClick={() => { setConfirmUpdate(false); void onUpdateAction?.() }}>Yes</button></>}><p>{updateConfirm.body}</p></Modal> : null}
+      {sessionHover ? createPortal(
+        <div id="session-hover-card" className="session-hover-card" role="tooltip" style={{ top: sessionHover.top, left: sessionHover.left }}>
+          <strong className="session-hover-card__title">{sessionHover.session.title}</strong>
+          {sessionHover.session.preview ? <p className="session-hover-card__preview">{sessionHover.session.preview}</p> : null}
+          <dl className="session-hover-card__meta">
+            <div><dt>Status</dt><dd>{t(STATUS_LABEL_KEYS[sessionHover.session.status])}</dd></div>
+            <div><dt>Last message</dt><dd>{formatSessionDateTime(sessionHover.session.lastUserMessageAt ?? sessionHover.session.updatedAt)} · {formatRelative(sessionHover.session.lastUserMessageAt ?? sessionHover.session.updatedAt)}</dd></div>
+            <div><dt>Created</dt><dd>{formatSessionDateTime(sessionHover.session.createdAt)}</dd></div>
+            {sessionHover.session.model ? <div><dt>Model</dt><dd>{sessionHover.session.model}</dd></div> : null}
+            <div><dt>Session</dt><dd><code>{sessionHover.session.id}</code></dd></div>
+          </dl>
+        </div>,
+        document.body,
+      ) : null}
+      {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
     </aside>
   )
 }
@@ -421,6 +500,7 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.onTogglePinProject === next.onTogglePinProject
     && previous.onClose === next.onClose
     && previous.onOpenPalette === next.onOpenPalette
+    && previous.onTogglePinSession === next.onTogglePinSession
     && previous.onRenameSession === next.onRenameSession
     && previous.onArchiveSession === next.onArchiveSession
     && previous.overlay === next.overlay

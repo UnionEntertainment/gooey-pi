@@ -3,9 +3,10 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Composer } from '../../src/components/Composer'
 import { ErrorBoundary } from '../../src/components/ErrorBoundary'
 import { Transcript } from '../../src/components/Transcript'
-import { saveComposerDraftFromDom, takeComposerDraft } from '../../src/lib/composer-draft'
+import { readComposerDraft, saveComposerDraft, saveComposerDraftFromDom } from '../../src/lib/composer-draft'
 import type { TranscriptMessage } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -88,7 +89,8 @@ describe('transcript per-message boundary', () => {
 })
 
 describe('composer draft preservation', () => {
-  it('saves the composer DOM value on catch and restores it once', () => {
+  it('saves the composer DOM value into the active scope on catch', () => {
+    saveComposerDraft('project:new', { text: '' })
     const composer = document.createElement('div')
     composer.className = 'composer'
     const textarea = document.createElement('textarea')
@@ -97,14 +99,14 @@ describe('composer draft preservation', () => {
     document.body.append(composer)
     try {
       saveComposerDraftFromDom()
-      expect(takeComposerDraft()).toBe('half-written prompt')
-      expect(takeComposerDraft()).toBe('')
+      expect(readComposerDraft('project:new')?.text).toBe('half-written prompt')
     } finally {
       composer.remove()
     }
   })
 
   it('seeds a remounted Composer with the preserved draft', async () => {
+    saveComposerDraft('project:new', { text: '' })
     const composer = document.createElement('div')
     composer.className = 'composer'
     const source = document.createElement('textarea')
@@ -113,8 +115,6 @@ describe('composer draft preservation', () => {
     document.body.append(composer)
     saveComposerDraftFromDom()
     composer.remove()
-
-    const { Composer } = await import('../../src/components/Composer')
     await act(async () => {
       root.render(<Composer
         busy={false}
@@ -129,6 +129,7 @@ describe('composer draft preservation', () => {
         imageInputSupported={false}
         messageEnterAction="queue"
         skills={[]}
+        draftKey="project:new"
         onModelChange={vi.fn()}
         onEffortChange={vi.fn()}
         onFastChange={vi.fn()}
@@ -137,6 +138,5 @@ describe('composer draft preservation', () => {
       />)
     })
     expect(container.querySelector('textarea')?.value).toBe('draft before crash')
-    expect(window.sessionStorage.length).toBe(0)
   })
 })

@@ -6,6 +6,7 @@ import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { parseMcpAuthenticationCommand } from '@/lib/mcp-policy'
 import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '@/lib/session-actions'
+import { markSessionTitleManual, sessionTitleIsManual } from '@/lib/session-titles'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, HarnessId, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, ProjectSortMode, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
@@ -98,6 +99,24 @@ export async function titleStartedSession({ bridge, harness, runtimeId, sessionF
   }
   await bridge.agent.command(runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
   await indexStartedSession({ bridge, harness, sessionFile, setSessions, fallbackTitle: title, isCurrent }).catch(() => undefined)
+}
+
+/**
+ * Retitles a session from each delivered prompt so the sidebar always reflects
+ * the latest task. Sessions the user renamed by hand are left alone; a failed
+ * rename is best-effort and must never fail prompt delivery.
+ */
+export function retitleSessionFromPrompt({ bridge, sessionFile, prompt, sessions, setSessions }: { bridge: PrimeWorkApi; sessionFile: string | undefined; prompt: string; sessions: SessionRecord[]; setSessions: Dispatch<SetStateAction<SessionRecord[]>> }): void {
+  if (!sessionFile) return
+  const title = sessionTitleFromPrompt(prompt)
+  if (!title || sessionTitleIsManual(sessionFile)) return
+  const session = sessions.find((item) => item.filePath === sessionFile)
+  if (session?.title === title) return
+  try {
+    void bridge.sessions.rename(sessionFile, title).then((renamed) => {
+      if (renamed) setSessions((items) => items.map((item) => item.filePath === sessionFile ? { ...item, title } : item))
+    }).catch(() => undefined)
+  } catch { /* rename is best-effort */ }
 }
 
 export function parseCompactCommand(prompt: string): { customInstructions?: string } | undefined {
@@ -225,6 +244,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     if (!bridge) return
     try {
       if (!await bridge.sessions.rename(session.filePath, title)) throw new Error(`${HARNESS_AGENT_NAMES[settingsState.settings.activeHarness]} could not rename this session.`)
+      markSessionTitleManual(session.filePath)
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, title } : item)); setToast('Session renamed.')
     } catch (error) { reportError(error) }
   }
@@ -243,6 +263,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         newSession()
       }
       setToast(archived ? 'Session archived.' : 'Session restored.')
+    } catch (error) { reportError(error) }
+  }
+  const togglePinSession = async (session: SessionRecord) => {
+    const { bridge, setSessions, setToast, reportError } = getDeps()
+    if (!bridge) { setToast('Session pinning is available in the desktop app.'); return }
+    try {
+      if (!await bridge.sessions.setPinned(session.filePath, !session.pinned)) throw new Error('This session could not be pinned.')
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, pinned: !session.pinned } : item))
     } catch (error) { reportError(error) }
   }
   const addProject = async () => {
@@ -339,6 +367,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           workspace.acceptSteer(pendingSteerId)
           const actions = parseSessionActionSnapshot(response.sessionActions)
           if (actions) workspace.acknowledgeSteer(pendingSteerId, actions)
+          retitleSessionFromPrompt({ bridge, sessionFile: currentWorkspace.sessionFile, prompt, sessions, setSessions })
           return
         } catch (error) {
           workspace.removeQueuedPrompt(pendingSteerId)
@@ -433,6 +462,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await followUpExternalSession(selected.sessionFile)) {
             if (intent === 'steer') appendUserMessage()
+            retitleSessionFromPrompt({ bridge, sessionFile: selected.sessionFile, prompt, sessions, setSessions })
             completeQueuedFlush()
             return
           }
@@ -443,6 +473,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) {
               if (intent === 'steer') appendUserMessage()
               completeQueuedFlush()
+              retitleSessionFromPrompt({ bridge, sessionFile: selected.sessionFile, prompt, sessions, setSessions })
               return
             }
             throw startError
@@ -489,6 +520,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
           }
           completeQueuedFlush()
+          retitleSessionFromPrompt({ bridge, sessionFile: activeRuntime.sessionFile ?? selected.sessionFile, prompt, sessions, setSessions })
         } else {
           startedPrompt = true
           appendUserMessage()
@@ -511,6 +543,8 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
               setSessions,
               isCurrent: () => workspace.workspaceRef.current.generation === generation,
             })
+          } else {
+            retitleSessionFromPrompt({ bridge, sessionFile: activeRuntime.sessionFile, prompt, sessions, setSessions })
           }
         }
       } catch (error) {
@@ -683,7 +717,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
 
   return {
     grantProject, persistPanel, toggleSidebar, toggleInspector, toggleTerminal,
-    selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived,
+    selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived, togglePinSession,
     addProject, removeProject, togglePinProject, setProjectSortMode, sendPrompt, stopRuntime, installSkill, installExtension, setMcpSupport, connectMcp, setMcpEnabled, mutateCapability,
     createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
     openBrowser, openChanges,

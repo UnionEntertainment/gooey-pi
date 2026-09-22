@@ -23,6 +23,7 @@ export interface DesktopState {
   projects: PersistedProject[]
   settings: AppSettings
   archivedSessions: string[]
+  pinnedSessions: string[]
   dismissedProjectPaths: string[]
   schedules: AutomationScheduleRecord[]
 }
@@ -152,7 +153,7 @@ export function defaultSettings(): AppSettings {
 }
 
 function defaultState(): DesktopState {
-  return { version: CURRENT_DESKTOP_STATE_VERSION, projects: [], settings: defaultSettings(), archivedSessions: [], dismissedProjectPaths: [], schedules: [] }
+  return { version: CURRENT_DESKTOP_STATE_VERSION, projects: [], settings: defaultSettings(), archivedSessions: [], pinnedSessions: [], dismissedProjectPaths: [], schedules: [] }
 }
 
 /** Versions 1 and 2 predate harness scoping, so only an absent value migrates to Prime. */
@@ -399,12 +400,14 @@ function parseSchedule(value: unknown, preHarnessState: boolean): AutomationSche
 }
 
 const MAX_ARCHIVED_SESSIONS = 5_000
+const MAX_PINNED_SESSIONS = 1_024
 const MAX_DISMISSED_PROJECT_PATHS = 1_024
 const MAX_STATE_FILE_BYTES = 64 * 1024 * 1024
 
 /** Normalize every persisted collection against its deterministic retention invariant. */
 function capUnboundedCollections(state: DesktopState): void {
   if (state.archivedSessions.length > MAX_ARCHIVED_SESSIONS) state.archivedSessions = state.archivedSessions.slice(-MAX_ARCHIVED_SESSIONS)
+  if (state.pinnedSessions.length > MAX_PINNED_SESSIONS) state.pinnedSessions = state.pinnedSessions.slice(-MAX_PINNED_SESSIONS)
   if (state.dismissedProjectPaths.length > MAX_DISMISSED_PROJECT_PATHS) state.dismissedProjectPaths = state.dismissedProjectPaths.slice(-MAX_DISMISSED_PROJECT_PATHS)
   normalizeScheduleRunHistory(state.schedules)
 }
@@ -432,6 +435,7 @@ function parseState(value: unknown, statePath: string): { sourceVersion: Support
     projects: Array.isArray(value.projects) ? value.projects.map((project) => parseProject(project, preHarnessProjectState)).filter((item): item is PersistedProject => item !== null) : [],
     settings: parseSettings(value.settings, preHarnessProjectState),
     archivedSessions: Array.isArray(value.archivedSessions) ? value.archivedSessions.filter((item): item is string => typeof item === 'string') : [],
+    pinnedSessions: Array.isArray(value.pinnedSessions) ? value.pinnedSessions.filter((item): item is string => typeof item === 'string') : [],
     dismissedProjectPaths: Array.isArray(value.dismissedProjectPaths) ? value.dismissedProjectPaths.filter((item): item is string => typeof item === 'string') : [],
     schedules: version !== 1 && Array.isArray(value.schedules) ? value.schedules.map((schedule) => parseSchedule(schedule, preHarnessScheduleState)).filter((item): item is AutomationScheduleRecord => item !== null).slice(0, 500) : [],
   }
@@ -577,6 +581,11 @@ export class JsonStateStore {
   getArchivedSessions(): string[] {
     this.assertCompatible()
     return [...this.state.archivedSessions]
+  }
+
+  getPinnedSessions(): string[] {
+    this.assertCompatible()
+    return [...this.state.pinnedSessions]
   }
 
   async update<T>(mutator: (draft: DesktopState) => T): Promise<T> {

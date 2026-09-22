@@ -140,4 +140,39 @@ describe('composer worktree picker', () => {
     expect(container.querySelector('textarea')?.value).toBe('Keep this prompt')
     expect(onModelChange).toHaveBeenCalledWith('openai:chosen')
   })
+
+  it('keeps drafts and attachments scoped to their workspace', async () => {
+    act(() => root.render(<Composer {...props({ draftKey: 'project-a:new' })} />))
+    const textarea = container.querySelector('textarea')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, 'draft for project A')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+    const file = new File([bytes], 'shot.png', { type: 'image/png' })
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer })
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: file.type, getAsFile: () => file }], getData: () => '' },
+    })
+    await act(async () => {
+      textarea.dispatchEvent(paste)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.querySelector('.composer-attachment')).not.toBeNull()
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    act(() => root.render(<Composer {...props({ draftKey: 'project-b:new' })} />))
+    expect(container.querySelector('textarea')?.value).toBe('')
+    expect(container.querySelector('.composer-attachment')).toBeNull()
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    act(() => root.render(<Composer {...props({ draftKey: 'project-a:new' })} />))
+    expect(container.querySelector('textarea')?.value).toBe('draft for project A')
+    expect(container.querySelector('.composer-attachment')).not.toBeNull()
+  })
 })

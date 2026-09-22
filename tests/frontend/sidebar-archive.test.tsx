@@ -200,7 +200,7 @@ describe('sidebar project context menu', () => {
     })
 
     await rightClick(container.querySelector('.project-row')!)
-    const menu = container.querySelector('[aria-label="Project options for Project"]')
+    const menu = container.querySelector('[role="menu"][aria-label="Project options for Project"]')
     expect(menu).not.toBeNull()
     const remove = [...menu!.querySelectorAll('button')].find((button) => button.textContent?.includes('Remove project'))
     expect(remove).toBeDefined()
@@ -267,6 +267,60 @@ describe('sidebar project context menu', () => {
     expect(container.querySelector('.sidebar__primary button[title="New session (Ctrl+N)"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Hide sidebar (Ctrl+B)"]')).not.toBeNull()
     expect(container.textContent).not.toContain('⌘')
+  })
+
+  it('opens the project menu on right-click, arrows through items, and returns focus on Escape', async () => {
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]} sessions={[session]} activeView="session"
+          onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
+          onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    const main = container.querySelector<HTMLElement>('.project-row__main')!
+    await rightClick(container.querySelector('.project-row')!)
+    const menu = container.querySelector<HTMLElement>('[role="menu"][aria-label="Project options for Project"]')!
+    expect(menu).not.toBeNull()
+    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(document.activeElement).toBe(items[0])
+
+    await act(async () => { items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+    expect(document.activeElement).toBe(items[1])
+    await act(async () => { items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })) })
+    expect(document.activeElement).toBe(items[0])
+
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(document.activeElement).toBe(main)
+  })
+
+  it('pins a session from its context menu and lists it first with a pin mark', async () => {
+    const onTogglePinSession = vi.fn()
+    const older = { ...session, id: 'older', title: 'Older', updatedAt: '2026-01-02T00:00:00.000Z', lastUserMessageAt: '2026-01-02T00:00:00.000Z' }
+    const pinned = { ...session, id: 'pinned', title: 'Pinned', pinned: true, updatedAt: '2026-01-01T00:00:00.000Z', lastUserMessageAt: '2026-01-01T00:00:00.000Z' }
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]} sessions={[older, pinned]} activeView="session"
+          onTogglePinSession={onTogglePinSession}
+          onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
+          onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    const titles = [...container.querySelectorAll('.session-row__title')].map((item) => item.textContent)
+    expect(titles).toEqual(['Pinned', 'Older'])
+    expect(container.querySelector('.session-row__pin')).not.toBeNull()
+
+    await rightClick(container.querySelector('.session-row')!)
+    const unpin = [...container.querySelectorAll('[role="menuitem"]')].find((button) => button.textContent?.includes('Unpin session'))
+    expect(unpin).toBeDefined()
+    await press(unpin!)
+    expect(onTogglePinSession).toHaveBeenCalledWith(pinned)
   })
 })
 

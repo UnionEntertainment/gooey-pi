@@ -81,6 +81,32 @@ export function activityNotificationSignature(session: SessionRecord): string | 
   return `${session.status}:${session.eventRevision ?? session.updatedAt}`
 }
 
+const systemNotificationBody: Record<string, string> = {
+  waiting: 'Waiting for input',
+  failed: 'Failed',
+  complete: 'Finished',
+  unread: 'New activity',
+}
+
+export interface SessionSystemNotification {
+  signature: string
+  title: string
+  body: string
+}
+
+/**
+ * macOS banner for a settled session, keyed by the same attention signature as
+ * the companion badge so a revision notifies exactly once. Archived and
+ * still-running sessions never produce one.
+ */
+export function sessionSystemNotification(session: SessionRecord): SessionSystemNotification | undefined {
+  if (session.archived || session.status === 'running') return undefined
+  const signature = sessionCompanionNotificationSignature(session)
+  if (!signature) return undefined
+  const status = signature.slice(0, signature.indexOf(':'))
+  return { signature, title: session.title, body: systemNotificationBody[status] ?? 'New activity' }
+}
+
 function parseClearedSignatures(raw: string | null): Record<string, string> {
   try {
     const parsed: unknown = JSON.parse(raw ?? '{}')

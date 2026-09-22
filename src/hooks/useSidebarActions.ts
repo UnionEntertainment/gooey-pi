@@ -10,6 +10,7 @@ type SidebarActions = Pick<SidebarProps,
   | 'onRemoveProject'
   | 'onSetProjectSortMode'
   | 'onTogglePinProject'
+  | 'onTogglePinSession'
   | 'onClose'
   | 'onOpenPalette'
   | 'onRenameSession'
@@ -34,6 +35,7 @@ export function createSidebarActionProxy(initialActions: SidebarActions): Sideba
       onRemoveProject: (project) => current.onRemoveProject(project),
       onSetProjectSortMode: (mode) => current.onSetProjectSortMode?.(mode),
       onTogglePinProject: (project) => current.onTogglePinProject?.(project),
+      onTogglePinSession: (session) => current.onTogglePinSession?.(session),
       onClose: () => current.onClose(),
       onOpenPalette: () => current.onOpenPalette(),
       onRenameSession: (session, title) => current.onRenameSession(session, title),

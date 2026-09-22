@@ -9,7 +9,7 @@ import { EmptyState, IconButton } from '../ui'
 const ROW_HEIGHT = 30
 const LANE_WIDTH = 16
 const GRAPH_PAD_X = 12
-const LANE_COLORS = ['#4f8ef7', '#a371f7', '#3fb950', '#e8a13d', '#f778ba', '#39c5cf', '#d29922', '#f85149']
+const LANE_COLORS = ['#4f8ef7', '#0f766e', '#3fb950', '#e8a13d', '#f778ba', '#39c5cf', '#d29922', '#f85149']
 
 const laneColor = (lane: number): string => LANE_COLORS[lane % LANE_COLORS.length]!
 const laneX = (lane: number): number => GRAPH_PAD_X + lane * LANE_WIDTH

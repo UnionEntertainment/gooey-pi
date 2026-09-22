@@ -1,61 +1,76 @@
+import type { ComposerImage, ComposerTextFile } from '@/hooks/useComposerAttachments'
+import type { BrowserAnnotation } from '@/types/api'
+
 export interface ComposerDraftSnapshot {
   text: string
   model?: string
   effort?: string
   fast?: boolean
+  images?: ComposerImage[]
+  textFiles?: ComposerTextFile[]
+  annotations?: BrowserAnnotation[]
 }
 
-const LEGACY_COMPOSER_DRAFT_KEY = 'prime-work.composer-draft'
 const COMPOSER_DRAFT_PREFIX = 'prime-work.composer-draft.v2:'
+const ACTIVE_SCOPE_KEY = 'prime-work.composer-draft.active-scope'
 
 export function composerDraftStorageKey(scope: string): string {
   return `${COMPOSER_DRAFT_PREFIX}${scope}`
 }
 
-/** Model, effort, and fast mode ride along with typed text; alone they are not a draft. */
-function emptyDraft(snapshot: ComposerDraftSnapshot): boolean {
-  return !snapshot.text
-}
-
-/** Snapshot the composer's current DOM value so a crash-and-reload keeps the draft. */
+/**
+ * Snapshot the composer's current DOM value into the active scope's draft so a
+ * crash-and-reload keeps the draft. Scoped drafts already persist on every
+ * keystroke; this only covers state that never reached React.
+ */
 export function saveComposerDraftFromDom(): void {
   try {
+    const scope = window.sessionStorage.getItem(ACTIVE_SCOPE_KEY)
+    if (!scope) return
     const textarea = document.querySelector<HTMLTextAreaElement>('.composer textarea')
-    if (textarea?.value) window.sessionStorage.setItem(LEGACY_COMPOSER_DRAFT_KEY, textarea.value)
+    if (!textarea?.value) return
+    saveComposerDraft(scope, { text: textarea.value })
   } catch { /* storage unavailable */ }
 }
 
-export function saveComposerDraft(scope: string, snapshot: ComposerDraftSnapshot): void {
+export function saveComposerDraft(scope: string, snapshot: Partial<ComposerDraftSnapshot>): void {
   try {
+    // The active scope lets a crash snapshot find the draft it belongs to.
+    window.sessionStorage.setItem(ACTIVE_SCOPE_KEY, scope)
     const key = composerDraftStorageKey(scope)
     const previous = readComposerDraft(scope)
     const next: ComposerDraftSnapshot = {
-      text: snapshot.text,
+      text: snapshot.text ?? previous?.text ?? '',
       model: snapshot.model || previous?.model,
       effort: snapshot.effort ?? previous?.effort,
       fast: snapshot.fast ?? previous?.fast,
+      images: snapshot.images ?? previous?.images,
+      textFiles: snapshot.textFiles ?? previous?.textFiles,
+      annotations: snapshot.annotations ?? previous?.annotations,
     }
-    if (emptyDraft(next)) {
+    // Model, effort, and fast mode ride along with typed text; alone they are not a draft.
+    if (!next.text && !next.images?.length && !next.textFiles?.length && !next.annotations?.length) {
       window.sessionStorage.removeItem(key)
-      window.sessionStorage.removeItem(LEGACY_COMPOSER_DRAFT_KEY)
       return
     }
-    window.sessionStorage.setItem(key, JSON.stringify(next))
-    window.sessionStorage.setItem(LEGACY_COMPOSER_DRAFT_KEY, next.text)
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(next))
+    } catch {
+      // Attachment payloads can exceed the sessionStorage quota; keep the text.
+      window.sessionStorage.setItem(key, JSON.stringify({ ...next, images: undefined, textFiles: undefined }))
+    }
   } catch { /* storage unavailable */ }
 }
 
 export function readComposerDraft(scope: string): ComposerDraftSnapshot | null {
   try {
     const raw = window.sessionStorage.getItem(composerDraftStorageKey(scope))
-    if (raw) {
-      const parsed = JSON.parse(raw) as unknown
-      if (parsed && typeof parsed === 'object' && typeof (parsed as ComposerDraftSnapshot).text === 'string') {
-        return parsed as ComposerDraftSnapshot
-      }
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object' && typeof (parsed as ComposerDraftSnapshot).text === 'string') {
+      return parsed as ComposerDraftSnapshot
     }
-    const legacy = window.sessionStorage.getItem(LEGACY_COMPOSER_DRAFT_KEY)
-    return legacy ? { text: legacy } : null
+    return null
   } catch {
     return null
   }
@@ -64,15 +79,5 @@ export function readComposerDraft(scope: string): ComposerDraftSnapshot | null {
 export function clearComposerDraft(scope: string): void {
   try {
     window.sessionStorage.removeItem(composerDraftStorageKey(scope))
-    window.sessionStorage.removeItem(LEGACY_COMPOSER_DRAFT_KEY)
   } catch { /* storage unavailable */ }
-}
-
-/** Read and clear a preserved crash draft; returns '' when none exists. */
-export function takeComposerDraft(): string {
-  try {
-    const draft = window.sessionStorage.getItem(LEGACY_COMPOSER_DRAFT_KEY) ?? ''
-    if (draft) window.sessionStorage.removeItem(LEGACY_COMPOSER_DRAFT_KEY)
-    return draft
-  } catch { return '' }
 }

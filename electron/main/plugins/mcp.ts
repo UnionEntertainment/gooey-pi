@@ -284,7 +284,23 @@ export function validateMcpConnection(value: unknown, harness: HarnessId = 'prim
       return parsed
     })
     if (args.length > 64) throw new TypeError('MCP arguments exceed the maximum count')
-    return { name, scope, projectPath, type: 'stdio', command, args }
+    let env: Record<string, string> | undefined
+    if (value.env !== undefined) {
+      if (!isRecord(value.env)) throw new TypeError('MCP environment must be an object')
+      const entries = Object.entries(value.env)
+      if (entries.length > 32) throw new TypeError('MCP environment exceeds the maximum variable count')
+      env = {}
+      for (const [key, raw] of entries) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || ['__proto__', 'prototype', 'constructor'].includes(key)) {
+          throw new TypeError('MCP environment variable name is invalid')
+        }
+        const parsed = requireString(raw, `MCP environment variable ${key}`, { max: 4_096 })
+        if (/[\0\r\n\u2028\u2029]/.test(parsed)) throw new TypeError(`MCP environment variable ${key} is invalid`)
+        env[key] = parsed
+      }
+      if (!entries.length) env = undefined
+    }
+    return { name, scope, projectPath, type: 'stdio', command, args, ...(env ? { env } : {}) }
   }
   throw new TypeError('MCP transport must be http or stdio')
 }
@@ -404,7 +420,7 @@ export async function updateMcpSettings(
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
       const includeType = options.includeType !== false
-      const config = { ...(includeType ? { type: 'stdio' } : {}), command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
+      const config = { ...(includeType ? { type: 'stdio' } : {}), command: input.command, ...(input.args?.length ? { args: input.args } : {}), ...(input.env ? { env: input.env } : {}), enabled: true }
       settings.mcpServers = { ...currentServers, [input.name]: config }
       if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
       if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {

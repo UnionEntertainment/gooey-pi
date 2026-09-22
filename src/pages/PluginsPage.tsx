@@ -4,6 +4,7 @@ import type { CapabilityMutationInput, ExtensionInstallInput, HarnessId, McpConn
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { NETWORK_MCP_UNAVAILABLE_DETAIL } from '@/lib/mcp-policy'
 import { EmptyState, Modal } from '@/components/ui'
+import { SupabasePage } from '@/pages/SupabasePage'
 
 const MCP_STDIO_HELP: Record<HarnessId, string> = {
   omp: 'OMP starts this stdio MCP server directly in each new session.',
@@ -58,9 +59,13 @@ interface PluginsPageProps {
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
   onSetMcpEnabled(input: McpStateInput): Promise<{ ok: boolean; output: string }>
   onMutateCapability?(input: CapabilityMutationInput): Promise<{ ok: boolean; output: string }>
+  onSuggestion?(prompt: string): void
+  onSupabaseLoginStart?(tokenName?: string): Promise<{ sessionId: string; url: string }>
+  onSupabaseLoginComplete?(sessionId: string, code: string): Promise<{ token: string }>
+  onSupabaseListProjects?(token: string): Promise<{ ref: string; name: string }[]>
 }
-
-export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, browserEnabled, onSetBrowserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onSetMcpEnabled, onMutateCapability = async () => ({ ok: false, output: 'Capability changes are unavailable.' }) }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, browserEnabled, onSetBrowserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onSetMcpEnabled, onMutateCapability = async () => ({ ok: false, output: 'Capability changes are unavailable.' }), onSuggestion = () => undefined, onSupabaseLoginStart = async () => { throw new Error('Supabase sign-in is available in the desktop app.') }, onSupabaseLoginComplete = async () => { throw new Error('Supabase sign-in is available in the desktop app.') }, onSupabaseListProjects = async () => { throw new Error('Supabase sign-in is available in the desktop app.') } }: PluginsPageProps) {
+  const [detail, setDetail] = useState<'supabase' | null>(null)
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -267,6 +272,10 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
     }
     return <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={updating} title={skill.availability?.detail} onClick={() => { if (skill.enabled) setConfirmDisable(skill); else void enable() }}>{updating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <><Check className="plugin-toggle__check" size={14}/><X className="plugin-toggle__disable" size={14}/></> : <Plus className="plugin-toggle__plus" size={14}/>}</button>
   }
+  if (detail === 'supabase') {
+    return <SupabasePage harness={harness} skills={skills} activeProjectPath={activeProjectPath} piMcpAdapterInstalled={piMcpAdapterInstalled} onBack={() => setDetail(null)} onRefresh={onRefresh} onOpenExternal={onOpenExternal} onConnectMcp={onConnectMcp} onSetMcpEnabled={onSetMcpEnabled} onMutateCapability={onMutateCapability} onSuggestion={onSuggestion} onSupabaseLoginStart={onSupabaseLoginStart} onSupabaseLoginComplete={onSupabaseLoginComplete} onSupabaseListProjects={onSupabaseListProjects}/>
+  }
+
 
   return (
     <div className="page plugin-page scroll-area">
@@ -299,6 +308,13 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
         {harness === 'pi' && mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
         {harness === 'pi' && mcpSupportNotice ? <p className="connection-warning" role="status">{mcpSupportUpdating ? <RefreshCw className="spin" size={13}/> : <ShieldCheck size={13}/>} {mcpSupportNotice}</p> : null}
         {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Enable Pi MCP Adapter below before adding servers.</p> : null}
+        {tab === 'plugins' ? (
+          <button type="button" className="featured-capability" onClick={() => setDetail('supabase')}>
+            <span className="featured-capability__icon"><svg width="18" height="18" viewBox="0 0 109 113" aria-hidden="true"><path fill="#3ecf8e" d="M63.71 110.61c-2.39 3.01-7.29 1.35-7.41-2.6l-1.38-44.39h30.45c5.8 0 9.03-6.66 5.41-11.17L45.36 2.43c-2.39-3.01-7.29-1.35-7.41 2.6l1.38 44.39H8.88c-5.8 0-9.03 6.66-5.41 11.17l60.24 50.02z"/></svg></span>
+            <span><strong>Supabase</strong><small>Connect Supabase accounts as local MCP servers — manage and query databases.</small></span>
+            <ChevronRight size={15}/>
+          </button>
+        ) : null}
         <p className="connection-warning"><ShieldCheck size={13}/> {NETWORK_MCP_UNAVAILABLE_DETAIL}</p>
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Capabilities' : 'Skills'}</h2><span>{visible.length} shown</span></div>
         {visible.length ? (

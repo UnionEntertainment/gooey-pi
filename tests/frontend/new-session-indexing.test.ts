@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { indexStartedSession, sessionTitleFromPrompt, titleStartedSession } from '../../src/hooks/useWorkspaceActions'
+import { indexStartedSession, retitleSessionFromPrompt, sessionTitleFromPrompt, titleStartedSession } from '../../src/hooks/useWorkspaceActions'
 import type { PrimeWorkApi, SessionRecord } from '../../src/types/api'
 
 const existing: SessionRecord = {
@@ -116,5 +116,63 @@ describe('new session indexing', () => {
     await indexing
 
     expect(sessions).toEqual([existing])
+  })
+})
+
+describe('prompt retitling', () => {
+  it('renames a session to the latest delivered prompt', async () => {
+    const rename = vi.fn(async () => true)
+    let sessions = [existing]
+    const setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>> = (update) => {
+      sessions = typeof update === 'function' ? update(sessions) : update
+    }
+
+    retitleSessionFromPrompt({
+      bridge: { sessions: { rename } } as unknown as PrimeWorkApi,
+      sessionFile: existing.filePath,
+      prompt: '  Investigate the\nflaky hover card  ',
+      sessions,
+      setSessions,
+    })
+    await vi.waitFor(() => expect(rename).toHaveBeenCalled())
+
+    expect(rename).toHaveBeenCalledWith(existing.filePath, 'Investigate the flaky hover card')
+    expect(sessions[0]?.title).toBe('Investigate the flaky hover card')
+  })
+
+  it('skips the rename when the title already matches the prompt', () => {
+    const rename = vi.fn(async () => true)
+    const setSessions = vi.fn()
+
+    retitleSessionFromPrompt({
+      bridge: { sessions: { rename } } as unknown as PrimeWorkApi,
+      sessionFile: existing.filePath,
+      prompt: 'Existing chat',
+      sessions: [existing],
+      setSessions,
+    })
+
+    expect(rename).not.toHaveBeenCalled()
+    expect(setSessions).not.toHaveBeenCalled()
+  })
+
+  it('treats rename failure as best-effort', async () => {
+    const rename = vi.fn(async () => false)
+    let sessions = [existing]
+    const setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>> = (update) => {
+      sessions = typeof update === 'function' ? update(sessions) : update
+    }
+
+    expect(() => retitleSessionFromPrompt({
+      bridge: { sessions: { rename } } as unknown as PrimeWorkApi,
+      sessionFile: existing.filePath,
+      prompt: 'New task',
+      sessions,
+      setSessions,
+    })).not.toThrow()
+    await vi.waitFor(() => expect(rename).toHaveBeenCalled())
+    await Promise.resolve()
+
+    expect(sessions[0]?.title).toBe('Existing chat')
   })
 })

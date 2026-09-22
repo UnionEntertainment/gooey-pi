@@ -644,6 +644,53 @@ describe('PluginService MCP connections', () => {
     expect(config.mcpServers.files).toMatchObject({ command: 'mcp-files', args: ['--root', '/tmp'], enabled: true })
   })
 
+  it.each(['omp', 'pi'] as const)('writes stdio env variables into the %s MCP definition', async (harness) => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    if (harness === 'pi') writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir, harness })
+
+    const response = await service.connectMcp({
+      name: 'supabase-acme', scope: 'user', type: 'stdio',
+      command: 'npx', args: ['-y', '@supabase/mcp-server-supabase', '--read-only'],
+      env: { SUPABASE_ACCESS_TOKEN: 'sbp_test_token' },
+    })
+
+    expect(response.ok).toBe(true)
+    const config = JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8'))
+    expect(config.mcpServers['supabase-acme']).toMatchObject({
+      command: 'npx',
+      args: ['-y', '@supabase/mcp-server-supabase', '--read-only'],
+      env: { SUPABASE_ACCESS_TOKEN: 'sbp_test_token' },
+      enabled: true,
+    })
+  })
+
+  it.each(['omp', 'pi'] as const)('rejects invalid %s MCP environment variables before touching settings', async (harness) => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    if (harness === 'pi') writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir, harness })
+    const settingsPath = join(agentDir, 'mcp.json')
+
+    for (const env of [
+      { '9BAD': 'x' },
+      { 'HAS-DASH': 'x' },
+      JSON.parse('{"__proto__":"x"}') as Record<string, string>,
+      { VALID: 'line\nbreak' },
+      { VALID: 'x'.repeat(4_097) },
+      Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`VAR_${index}`, 'x'])),
+      ['not', 'a', 'record'],
+    ]) {
+      await expect(service.connectMcp({
+        name: 'files', scope: 'user', type: 'stdio', command: 'mcp-files', env,
+      })).rejects.toThrow(/environment/)
+      expect(existsSync(settingsPath)).toBe(false)
+    }
+  })
+
   it.each(['omp', 'pi'] as const)('marks unaddressable local %s MCP keys non-actionable while retaining bounded cleanup identity', async (harness) => {
     const root = temp()
     const agentDir = join(root, 'agent')

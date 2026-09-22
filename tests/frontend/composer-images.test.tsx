@@ -99,8 +99,7 @@ function dispatchPasteFiles(files: File[], text = ''): void {
 async function pasteFiles(files: File[], text = ''): Promise<void> {
   await act(async () => {
     dispatchPasteFiles(files, text)
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let tick = 0; tick < 8; tick += 1) await Promise.resolve()
   })
 }
 
@@ -111,8 +110,7 @@ async function pickFiles(files: File[]): Promise<void> {
   Object.defineProperty(input, 'files', { configurable: true, value: files })
   await act(async () => {
     input?.dispatchEvent(new Event('change', { bubbles: true }))
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let tick = 0; tick < 8; tick += 1) await Promise.resolve()
   })
 }
 
@@ -131,8 +129,7 @@ async function dropFiles(files: File[]): Promise<void> {
     dispatchDrag('dragenter', composer, files)
     dispatchDrag('dragover', composer, files)
     dispatchDrag('drop', composer, files)
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let tick = 0; tick < 8; tick += 1) await Promise.resolve()
   })
 }
 
@@ -276,7 +273,7 @@ describe('Composer image ingestion', () => {
     expect(attachments).toHaveLength(2)
     expect(attachments.join(' ')).toContain('submitted.png')
     expect(attachments.join(' ')).toContain('new-draft.png')
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('draft and images were restored')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('draft and attachments were restored')
   })
 
   it('reports submitted images omitted from failed-send restoration when new images fill the limit', async () => {
@@ -373,20 +370,38 @@ describe('Composer image ingestion', () => {
     expect(container.querySelector('.composer-attachment')?.textContent).toContain('pasted.png')
   })
 
-  it('stages mixed file types and rejects unsupported files when sending', async () => {
-    const onSend = renderComposer()
-    const unsupported = new File(['plain text'], 'notes.txt', { type: 'text/plain' })
+  it('stages mixed file types and inlines text files into the sent prompt', async () => {
+    const onSend = renderComposer(vi.fn(async () => undefined))
+    const csv = new File(['id,total\n1,42'], 'report.csv', { type: 'text/csv' })
 
-    await pasteFiles([pastedPng(), unsupported], 'keep this text')
+    await pasteFiles([pastedPng(), csv], 'keep this text')
 
     expect(container.querySelectorAll('.composer-attachment')).toHaveLength(2)
-    expect(container.textContent).toContain('notes.txt')
+    expect(container.textContent).toContain('report.csv')
     await act(async () => {
       ;(container.querySelector('button[aria-label="Send message"]') as HTMLButtonElement).click()
+      await Promise.resolve()
     })
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('notes.txt cannot be sent')
+    expect(onSend).toHaveBeenCalledTimes(1)
+    const [prompt, images] = onSend.mock.calls[0]
+    expect(prompt).toContain('keep this text')
+    expect(prompt).toContain('===== BEGIN ATTACHED FILES =====')
+    expect(prompt).toContain('--- File 1 of 1: report.csv (text/csv) ---')
+    expect(prompt).toContain('id,total\n1,42')
+    expect(prompt).toContain('===== END ATTACHED FILES =====')
+    expect(images).toHaveLength(1)
+    expect(container.querySelector('.composer-attachment')).toBeNull()
+  })
+
+  it('rejects binary files at attach time instead of staging them', async () => {
+    renderComposer()
+    const binary = new File([Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0xff, 0x00])], 'archive.zip', { type: 'application/zip' })
+
+    await pasteFiles([binary], 'keep this text')
+
+    expect(container.querySelector('.composer-attachment')).toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('archive.zip cannot be attached')
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('keep this text')
-    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('shares count and byte limits across picker, paste, and drop', async () => {

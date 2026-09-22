@@ -170,6 +170,7 @@ export class SessionService {
     if (force) this.catalog.invalidateLiveCatalog()
     const sessions = await this.catalog.all()
     const archived = new Set(this.store.getArchivedSessions().map((path) => resolve(path)))
+    const pinned = new Set(this.store.getPinnedSessions().map((path) => resolve(path)))
     // One runtime snapshot per list call; each session then resolves in O(1).
     const runtimeBySession = this.snapshotRuntimeSessions()
     const records: SessionRecord[] = []
@@ -182,7 +183,7 @@ export class SessionService {
         : this.runtimeForSession(metadata.filePath)
       if (runtime) metadata.status = runtime.isStreaming || runtime.isCompacting ? 'running' : 'idle'
       const { sessionName: _sessionName, ...record } = metadata
-      records.push({ ...record, harness: this.harness, archived: isArchived })
+      records.push({ ...record, harness: this.harness, archived: isArchived, pinned: pinned.has(resolve(metadata.filePath)) })
     }
     return records.sort((a, b) => Date.parse(b.lastUserMessageAt ?? b.createdAt) - Date.parse(a.lastUserMessageAt ?? a.createdAt) || comparePaths(a.filePath, b.filePath))
   }
@@ -269,6 +270,16 @@ export class SessionService {
     await this.store.update((state) => {
       state.archivedSessions = state.archivedSessions.filter((path) => resolve(path) !== resolve(safePath))
       if (archived) state.archivedSessions.push(safePath)
+    })
+    return true
+  }
+
+  async setPinned(filePath: unknown, pinnedValue: unknown = true): Promise<boolean> {
+    const safePath = await this.requireSessionPath(filePath)
+    const pinned = requireBoolean(pinnedValue, 'pinned')
+    await this.store.update((state) => {
+      state.pinnedSessions = state.pinnedSessions.filter((path) => resolve(path) !== resolve(safePath))
+      if (pinned) state.pinnedSessions.push(safePath)
     })
     return true
   }

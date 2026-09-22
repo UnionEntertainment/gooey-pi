@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WorkspaceView } from '@/types/api'
 
+export const SIDEBAR_MIN = 200
+export const SIDEBAR_DEFAULT = 248
+export const WORKBENCH_MIN = 480
 export const INSPECTOR_MIN = 340
 export const INSPECTOR_DEFAULT = 520
 export const CHAT_MIN = 360
@@ -36,8 +39,10 @@ export function usePanelLayout({
   const [smallestLayout, setSmallestLayout] = useState(() => window.matchMedia(`(max-width: ${SMALLEST_LAYOUT_BREAKPOINT}px)`).matches)
   const [smallestSidebarAllowed, setSmallestSidebarAllowed] = useState(false)
   const [smallestInspectorAllowed, setSmallestInspectorAllowed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(() => readPanelSize('prime-work.sidebar-width', SIDEBAR_DEFAULT))
   const [inspectorWidth, setInspectorWidth] = useState(() => readPanelSize('prime-work.inspector-width', INSPECTOR_DEFAULT))
   const [terminalHeight, setTerminalHeight] = useState(() => readPanelSize('prime-work.terminal-height', TERMINAL_DEFAULT))
+  const [sidebarMax, setSidebarMax] = useState(() => Math.max(SIDEBAR_MIN, window.innerWidth - WORKBENCH_MIN))
   const [inspectorMax, setInspectorMax] = useState(660)
   const [terminalMax, setTerminalMax] = useState(520)
   const workspaceRowRef = useRef<HTMLDivElement>(null)
@@ -57,6 +62,7 @@ export function usePanelLayout({
         setSmallestSidebarAllowed(false)
         setSmallestInspectorAllowed(false)
       }
+      setSidebarMax(Math.max(SIDEBAR_MIN, window.innerWidth - WORKBENCH_MIN))
     }
     sync()
     window.addEventListener('resize', sync)
@@ -108,8 +114,10 @@ export function usePanelLayout({
     return () => observer.disconnect()
   }, [inspectorOpen, terminalOpen, view])
 
+  useEffect(() => setSidebarWidth((value) => Math.min(sidebarMax, Math.max(SIDEBAR_MIN, value))), [sidebarMax])
   useEffect(() => setInspectorWidth((value) => Math.min(inspectorMax, Math.max(INSPECTOR_MIN, value))), [inspectorMax])
   useEffect(() => setTerminalHeight((value) => Math.min(terminalMax, Math.max(TERMINAL_MIN, value))), [terminalMax])
+  useEffect(() => { window.localStorage.setItem('prime-work.sidebar-width', String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => { window.localStorage.setItem('prime-work.inspector-width', String(inspectorWidth)) }, [inspectorWidth])
   useEffect(() => { window.localStorage.setItem('prime-work.terminal-height', String(terminalHeight)) }, [terminalHeight])
 
@@ -120,11 +128,14 @@ export function usePanelLayout({
     setSmallestSidebarAllowed,
     setSmallestInspectorAllowed,
     compactRestoreRef,
+    sidebarWidth,
+    setSidebarWidth,
     inspectorWidth,
     setInspectorWidth,
     terminalHeight,
     setTerminalHeight,
     inspectorMax,
+    sidebarMax,
     terminalMax,
     workspaceRowRef,
     sessionWorkspaceRef,

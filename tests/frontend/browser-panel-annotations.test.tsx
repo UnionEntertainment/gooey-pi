@@ -213,7 +213,7 @@ describe('BrowserPanel annotation mode', () => {
       stale: false,
       createdAt: index,
     }))
-    const api: BrowserAnnotationsApi = { annotations, atCapacity: true, add: vi.fn(() => false), remove: vi.fn(), clear: vi.fn(), handleNavigation: vi.fn(), sendSignal: 0, requestSend: vi.fn() }
+    const api: BrowserAnnotationsApi = { annotations, atCapacity: true, add: vi.fn(() => false), remove: vi.fn(), clear: vi.fn(), restore: vi.fn(), handleNavigation: vi.fn(), sendSignal: 0, requestSend: vi.fn() }
     await act(async () => root.render(<BrowserPanel home="https://example.com/" onOpenExternal={() => undefined} annotations={api} pollIntervalMs={50} />))
     await makeDomReady()
     const injectedBefore = executed.filter((code) => code.includes('__primeAnnotator.start()')).length
