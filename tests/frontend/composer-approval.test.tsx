@@ -64,7 +64,7 @@ describe('composer approval mode control', () => {
     const onApprovalModeChange = vi.fn()
     act(() => root.render(<Composer {...props({ harness: 'omp', approvalMode: 'inherit', onApprovalModeChange })} />))
 
-    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Approval mode: Inherit"]')!.click())
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Approval mode: omp default"]')!.click())
     const yolo = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((option) => option.textContent?.includes('YOLO'))!
     act(() => yolo.click())
 

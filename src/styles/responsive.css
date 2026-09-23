@@ -59,7 +59,7 @@
   .transcript { padding-top: 20px; padding-bottom: 184px; }
   .transcript__inner { padding-inline: 15px; }
   .message--assistant { grid-template-columns: 24px minmax(0, 1fr); gap: 9px; }
-  .message__content, .user-bubble { font-size: 13.5px; }
+  .message__content, .user-bubble { font-size: var(--text-lg); }
   .activity-tool__summary, .work-disclosure__button, .agent-message__summary, .goal-message__summary { min-height: 44px; }
   .activity-tool__state { display: none; }
   .composer-wrap { left: 9px; right: 9px; bottom: 8px; width: calc(100% - 18px); }
@@ -153,7 +153,7 @@
   .schedule-ledger-summary > span:last-child { display: none; }
   .schedule-row__status { width: 32px; height: 32px; }
   .schedule-row__tags > span:nth-child(n+2) { display: none; }
-  .schedule-detail__header h1 { font-size: 21px; }
+  .schedule-detail__header h1 { font-size: var(--text-xl); }
   .schedule-detail__actions { display: grid; grid-template-columns: 1fr 1fr; }
   .schedule-detail__actions .button { width: 100%; }
   .schedule-date-fields, .schedule-execution-grid { grid-template-columns: 1fr; }

@@ -1569,7 +1569,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__primary .lucide-notebook-pen')).toHaveCount(1)
     await expect(page.locator('.project-row__new-session .lucide-notebook-pen')).toHaveCount(1)
     await expect(page.locator('.sidebar__section-heading .lucide-folder-plus')).toHaveCount(1)
-    await expect(page.getByTitle('New session (⌘N)')).toHaveCount(2)
+    await expect(page.getByTitle('New session (⌘N)')).toHaveCount(1)
     await expect(page.getByTitle('Add project')).toHaveCount(1)
     await expect(projectRow.getByTitle('New session in Multi-folder fixture')).toHaveCount(1)
     await expect(page.getByTitle('Archive Hermetic desktop fixture')).toHaveCount(1)

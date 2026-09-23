@@ -8,7 +8,7 @@ interface ApprovalModePickerProps {
 }
 
 const TRIGGER_LABELS: Record<OmpApprovalMode, string> = {
-  'inherit': 'Inherit',
+  'inherit': 'omp default',
   'always-ask': 'Always ask',
   'write': 'Write',
   'yolo': 'YOLO',

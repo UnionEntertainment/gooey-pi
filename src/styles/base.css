@@ -22,11 +22,14 @@
   --surface-selected: #e5e5e2;
   --surface-raised: #ffffff;
   --text: #20201e;
-  --text-secondary: #686863;
+  --text-secondary: #4f4f4b;
   --text-tertiary: #6f6f69;
+  --text-disabled: #a3a39d;
   --text-selected-meta: #5f5f59;
-  --border: #e3e3df;
-  --border-strong: #d3d3ce;
+  /* Light borders are translucent so they recede into whichever surface they
+     sit on (canvas, sidebar, raised card) instead of reading as a pasted line. */
+  --border: rgb(0 0 0 / .09);
+  --border-strong: rgb(0 0 0 / .16);
   --focus: #6aa9ff;
   --prime: #b04a0c;
   --prime-soft: #faeade;
@@ -68,7 +71,22 @@
   --terminal-bright-magenta: #7046a3;
   --terminal-bright-cyan: #177f83;
   --terminal-bright-white: #20201e;
-  --shadow-popover: 0 10px 30px rgba(0, 0, 0, .12);
+  /* Layered: a tight contact shadow plus a soft ambient one reads as a real
+     surface; a single large blur reads as a sticker. */
+  --shadow-subtle: 0 1px 2px rgb(0 0 0 / .05);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / .04), 0 3px 12px rgb(0 0 0 / .07);
+  --shadow-popover: 0 1px 2px rgb(0 0 0 / .04), 0 4px 8px rgb(0 0 0 / .04), 0 12px 32px rgb(0 0 0 / .09);
+  /* Type scale: six sizes and three weights cover all chrome. Nothing below
+     11px — de-emphasis comes from color, not shrinking. */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 18px;
+  --text-2xl: 24px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
   /* Shared transcript column measure: grows with the pane from the reading
      minimum, capped so prose stays readable on very wide monitors. Sized in
      cqi against .conversation-pane so the scrolled column and the absolutely
@@ -91,6 +109,7 @@
   --text: #f1f1ee;
   --text-secondary: #b3b3ad;
   --text-tertiary: #969690;
+  --text-disabled: #5e5e5a;
   --text-selected-meta: #a0a09a;
   --border: #343431;
   --border-strong: #474743;
@@ -135,7 +154,9 @@
   --terminal-bright-magenta: #b8adff;
   --terminal-bright-cyan: #8ad9da;
   --terminal-bright-white: #f1f1ee;
-  --shadow-popover: 0 12px 34px rgba(0, 0, 0, .38);
+  --shadow-subtle: 0 1px 2px rgb(0 0 0 / .3);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / .3), 0 3px 12px rgb(0 0 0 / .3);
+  --shadow-popover: 0 1px 2px rgb(0 0 0 / .3), 0 4px 10px rgb(0 0 0 / .2), 0 14px 36px rgb(0 0 0 / .34);
 }
 
 * { box-sizing: border-box; }
@@ -144,7 +165,7 @@
    lets the browser scroll the whole shell out of view, with no scrollbar and no wheel
    target to bring it back. `clip` is not scrollable, so that state is unreachable. */
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: clip; }
-body { color: var(--text); background: var(--canvas); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+body { color: var(--text); background: var(--canvas); font-size: var(--text-md); line-height: 1.45; -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { color: inherit; font: inherit; }
 /* Chromium's Linux native select popup does not reliably inherit the page's
    scheme or transparent control background. Keep every native menu surface
@@ -155,15 +176,20 @@ option:disabled { color: var(--text-tertiary); }
 :root[data-theme="dark"] select, :root[data-theme="dark"] option, :root[data-theme="dark"] optgroup { color-scheme: dark; }
 button { border: 0; }
 button, select { cursor: default; }
-button:disabled { opacity: .38; pointer-events: none; }
+/* A dedicated muted color, not opacity: opacity-based disabling reads differently
+   on every surface it lands on. */
+button:disabled { color: var(--text-disabled); pointer-events: none; }
 button { transition: opacity 130ms ease-out; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 code, pre, .mono { font-family: "SFMono-Regular", "SF Mono", "Cascadia Code", Menlo, monospace; }
 code { font-size: .92em; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
-kbd { color: var(--text-tertiary); font: 10.5px/1.2 "SFMono-Regular", "SF Mono", Menlo, monospace; }
+kbd { color: var(--text-tertiary); font: var(--text-xs)/1.2 "SFMono-Regular", "SF Mono", Menlo, monospace; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Ellipsis at the start, keeping a path's tail (the folder name) visible; wrap
+   the text in <bdi dir="ltr"> so the leading slash stays put. */
+.truncate--start { direction: rtl; text-align: left; }
 .drag-region { -webkit-app-region: drag; }
 .no-drag, .drag-region button, .drag-region input { -webkit-app-region: no-drag; }
 .prime-color { color: var(--prime); }

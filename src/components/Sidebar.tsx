@@ -4,9 +4,9 @@ import {
   Bell,
   CalendarClock,
   Check,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Command,
   Copy,
   Download,
   Folder,
@@ -85,7 +85,7 @@ const STATUS_LABEL_KEYS = {
 
 const STATUS_META_KEYS = {
   running: 'session.meta.running', waiting: 'session.meta.waiting',
-  complete: 'session.meta.complete', failed: 'session.meta.failed',
+  failed: 'session.meta.failed',
 } as const satisfies Partial<Record<SessionRecord['status'], MessageKey>>
 
 const HOVER_CARD_DELAY_MS = 400
@@ -207,7 +207,7 @@ function SessionStatusMark({ status, attention }: { status: SessionRecord['statu
   const title = status === 'failed' && !attention ? t('session.status.failedCleared') : t(STATUS_LABEL_KEYS[status])
   if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={title}><LoaderCircle className="spin" size={13} /></span>
   if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={title}><MessageCircleQuestion size={12} /></span>
-  if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={title}><CheckCircle2 size={12} /></span>
+  if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={title} />
   return <span className={`session-status-mark session-status-mark--${status}`} title={title}><span /></span>
 }
 
@@ -475,7 +475,6 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
           ) : null}
         </div>
         <div className="sidebar__title-actions no-drag">
-          <IconButton label={`New session (${newSessionShortcut})`} onClick={() => onNewSession()}><NotebookPen size={16} /></IconButton>
           <IconButton label={`Hide sidebar (${sidebarShortcut})`} onClick={onClose}><PanelLeftClose size={16} /></IconButton>
         </div>
       </div>
@@ -581,7 +580,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
       </div>
 
       <div className="sidebar__footer">
-        <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
+        <button type="button" title="Commands" onClick={onOpenPalette}><Command size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
         {updateVisible ? (
           <>
             <span className="sr-only" role="status" aria-live="polite">{updateAnnouncement(updateState)}</span>
