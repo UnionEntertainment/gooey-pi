@@ -117,30 +117,31 @@ describe('pi RPC adapter argv', () => {
     expect(PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, approvalMode: 'yolo' })).toEqual(['--mode', 'rpc'])
   })
 
-  it('injects only the enabled computer-use skill and forwards the scoped app extensions', () => {
+  it('injects the enabled ego-browser and computer-use skills and forwards the scoped app extensions', () => {
     const environment = {
       PRIME_WORK_SCHEDULE_SKILL_PATH: '/skills/schedule.md',
-      PRIME_WORK_BROWSER_SKILL_PATH: '/skills/browser.md',
+      GOOEYPI_EGO_BROWSER_SKILL_PATH: '/skills/ego-browser',
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
-      PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
+      PRIME_WORK_TERMINAL_EXTENSION_PATH: '/extensions/terminal.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
       GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
       GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/extensions/pi-fast-mode.ts',
       GOOEYPI_COMPUTER_USE_SKILL_PATH: '/skills/computer-use.md',
     } as NodeJS.ProcessEnv
     const args = PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })
-    expect(args.slice(-12)).toEqual([
+    expect(args.slice(-14)).toEqual([
+      '--skill', '/skills/ego-browser',
       '--skill', '/skills/computer-use.md',
       '--extension', '/extensions/pi-fast-mode.ts',
       '--extension', '/extensions/schedules.ts',
-      '--extension', '/extensions/browser.ts',
+      '--extension', '/extensions/terminal.ts',
       '--extension', '/extensions/ask-user.ts',
       '--extension', '/extensions/collaboration.ts',
     ])
   })
 
   it('drops unsafe extension paths instead of passing them through', () => {
-    const environment = { PRIME_WORK_BROWSER_EXTENSION_PATH: '--extension-injection' } as NodeJS.ProcessEnv
+    const environment = { PRIME_WORK_TERMINAL_EXTENSION_PATH: '--extension-injection' } as NodeJS.ProcessEnv
     expect(PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })).toEqual(['--mode', 'rpc'])
   })
 })
@@ -206,9 +207,9 @@ describe('pi RPC handshake', () => {
     const manager = piManager(fake.executable, { providers: piCatalog })
     manager.setRuntimeEnvironmentProvider(() => ({
       PRIME_WORK_SCHEDULE_SKILL_PATH: '/skills/schedule.md',
-      PRIME_WORK_BROWSER_SKILL_PATH: '/skills/browser.md',
+      GOOEYPI_EGO_BROWSER_SKILL_PATH: '/skills/ego-browser',
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
-      PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
+      PRIME_WORK_TERMINAL_EXTENSION_PATH: '/extensions/terminal.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
       GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
       GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/extensions/pi-fast-mode.ts',
@@ -225,10 +226,10 @@ describe('pi RPC handshake', () => {
     expect(argv[argv.indexOf('--provider') + 1]).toBe('openai-codex')
     expect(argv[argv.indexOf('--model') + 1]).toBe('gpt-5.6-luna')
     expect(argv[argv.indexOf('--thinking') + 1]).toBe('high')
-    expect(argv).not.toContain('--skill')
+    expect(argv[argv.indexOf('--skill') + 1]).toBe('/skills/ego-browser')
     expect(argv).not.toContain('--approval-mode')
     const extensionPaths = argv.flatMap((value, index) => value === '--extension' ? [argv[index + 1]] : [])
-    expect(extensionPaths).toEqual(['/extensions/pi-fast-mode.ts', '/extensions/schedules.ts', '/extensions/browser.ts', '/extensions/ask-user.ts', '/extensions/collaboration.ts'])
+    expect(extensionPaths).toEqual(['/extensions/pi-fast-mode.ts', '/extensions/schedules.ts', '/extensions/terminal.ts', '/extensions/ask-user.ts', '/extensions/collaboration.ts'])
   })
 })
 

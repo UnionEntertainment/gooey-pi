@@ -1,5 +1,5 @@
 import { Bot, Keyboard, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES, OMP_APPROVAL_MODE_LABELS } from '@/lib/harness'
@@ -7,6 +7,7 @@ import { detectRendererPlatform, shortcutLabel } from '@/lib/platform-shortcuts'
 import type { SettingsMetaSectionProps } from './contracts'
 import { DraftSettingField } from './DraftSettingField'
 import { SettingsToggle } from './SettingsToggle'
+import { nextChoiceIndex } from './AppearanceSettings'
 
 export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: SettingsMetaSectionProps) {
   const activeHarness = settings.activeHarness
@@ -16,6 +17,15 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
   const platform = meta?.platform ?? detectRendererPlatform()
   const oppositeActionShortcut = shortcutLabel(platform, ['Primary', 'Enter'])
   const newLineShortcut = shortcutLabel(platform, ['Shift', 'Enter'])
+  const enterActions = ['queue', 'steer'] as const
+  const selectedEnterAction = Math.max(0, enterActions.indexOf(settings.messageEnterAction))
+  const onEnterActionKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
+    const next = nextChoiceIndex(event.key, selectedEnterAction, enterActions.length)
+    if (next === null) return
+    event.preventDefault()
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+    void onUpdate({ messageEnterAction: enterActions[next] })
+  }
   const refreshHarnesses = async () => {
     if (refreshing) return
     setRefreshing(true)
@@ -93,8 +103,8 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
         <h2>Message shortcuts</h2>
         <label className="settings-row">
           <span><strong>Primary Enter action while an agent is working</strong><small>{oppositeActionShortcut} always uses the opposite action. {newLineShortcut} adds a new line.</small></span>
-          <span className="shortcut-choice" role="radiogroup" aria-label="Primary Enter action">
-            {(['queue', 'steer'] as const).map((action) => <button key={action} type="button" className={`button button--compact ${settings.messageEnterAction === action ? 'is-active' : ''}`} role="radio" aria-checked={settings.messageEnterAction === action} onClick={() => { void onUpdate({ messageEnterAction: action }) }}>{action === 'queue' ? 'Queue' : 'Steer'}</button>)}
+          <span className="shortcut-choice" role="radiogroup" aria-label="Primary Enter action" onKeyDown={onEnterActionKeyDown}>
+            {enterActions.map((action, index) => <button key={action} type="button" className={`button button--compact ${settings.messageEnterAction === action ? 'is-active' : ''}`} role="radio" aria-checked={settings.messageEnterAction === action} tabIndex={index === selectedEnterAction ? 0 : -1} onClick={() => { void onUpdate({ messageEnterAction: action }) }}>{action === 'queue' ? 'Queue' : 'Steer'}</button>)}
           </span>
         </label>
         <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Queue message' : 'Steer current turn'}</span><kbd>Enter</kbd></div>

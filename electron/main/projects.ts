@@ -158,6 +158,8 @@ export class ProjectService {
     private readonly windowProvider: () => BrowserWindow | null,
     private readonly harness: HarnessId = 'prime',
     private readonly identityFilesystem: FolderIdentityFilesystem = defaultFolderIdentityFilesystem,
+    /** Session project paths that must never surface as inferred projects (e.g. GooeyPi's own workspace). */
+    private readonly excludedSessionRoots: readonly string[] = [],
   ) {}
 
   /** Persisted projects visible to this instance: exactly its own harness's records. */
@@ -285,15 +287,16 @@ export class ProjectService {
     represented: ReadonlySet<string>,
     authorizationRevision: number,
   ): Promise<Array<{ canonical: string; identity: FolderIdentity }>> {
-    const rawPaths = [...new Set(sessions.map((session) => session.projectPath).filter((path): path is string => Boolean(path)))]
     const discovered: Array<{ canonical: string; identity: FolderIdentity }> = []
+    const excluded = new Set(this.excludedSessionRoots.map((path) => resolve(path)))
     const seen = new Set<string>()
 
+    const rawPaths = [...new Set(sessions.map((session) => session.projectPath).filter((path): path is string => Boolean(path)))]
     for (const projectPath of rawPaths) {
       if (authorizationRevision !== this.authorizationRevision) break
       try {
         const canonical = await requireExistingDirectory(projectPath, 'session project path')
-        if (seen.has(canonical) || represented.has(canonical) || dismissed.has(canonical)) continue
+        if (seen.has(canonical) || excluded.has(canonical) || represented.has(canonical) || dismissed.has(canonical)) continue
         if (await this.isBroadRoot(canonical)) continue
         seen.add(canonical)
         const { identity } = await this.captureFolderIdentity(canonical)

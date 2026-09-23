@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell } from 'electron'
 import type { BrowserWindowConstructorOptions, Input, WebContents } from 'electron'
 import { extname, isAbsolute, join, relative, resolve, win32 as win32Path } from 'node:path'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { assertNoMcpAuthenticationCommand } from '../../src/lib/mcp-policy'
@@ -14,7 +14,7 @@ import { installCrashGuards } from './crash-guard'
 import { CuaDriverService } from './cua-driver'
 import { GitService } from './git'
 import { CheckoutService } from './checkouts'
-import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
+import { isTrustedRendererUrl, registerIpc, sendToTrustedRenderer, type IpcRegistration } from './ipc'
 import { HarnessDiscoveryService, reconcileActiveHarness } from './harness-discovery'
 import { beginProcessShutdown, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
@@ -30,8 +30,8 @@ import { ScheduledRunExecutor } from './schedules/executor'
 import { HeartbeatService } from './schedules/heartbeats'
 import { AutomationService } from './schedules/service'
 import { AgentScheduleBridge } from './schedules/agent-bridge'
-import { AgentBrowserBridge } from './browser/agent-bridge'
-import { AgentBrowserService } from './browser/agent-service'
+import { AgentTerminalBridge } from './terminal-bridge'
+import { probeEgoBrowser } from './ego-browser'
 import { AgentCollaborationBridge } from './collaboration/agent-bridge'
 import { configureGooeyPiAgentMessageSigning, loadOrCreateGooeyPiAgentMessageKey } from './collaboration/message-envelope'
 import { extensionInjection, resolveExtensionPath, type ExtensionCapability } from './extension-manifest'
@@ -59,8 +59,7 @@ let updateService: UpdateService | null = null
 let store: JsonStateStore | null = null
 let automation: AutomationService | null = null
 let agentScheduleBridges: AgentScheduleBridge[] = []
-let agentBrowser: AgentBrowserService | null = null
-let agentBrowserBridge: AgentBrowserBridge | null = null
+let agentTerminalBridge: AgentTerminalBridge | null = null
 let agentCollaborationBridge: AgentCollaborationBridge | null = null
 let backgroundMode: MacBackgroundController | null = null
 let shutdownStarted = false
@@ -173,9 +172,6 @@ export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string =
     contents.on('will-redirect', (event) => { if (!isAllowedBrowserUrl(event.url)) event.preventDefault() })
     contents.on('will-frame-navigate', (event) => { if (!isAllowedBrowserUrl(event.url)) event.preventDefault() })
     contents.once('destroyed', () => downloads?.cancelOwner(contents.id))
-    // Guests reaching this point passed the will-attach-webview partition and
-    // URL gates above, which makes them eligible for agent control.
-    agentBrowser?.approveGuest(contents)
   })
   window.webContents.on('will-navigate', (event, target) => {
     const current = window.webContents.getURL()
@@ -477,37 +473,32 @@ export function startupFailureDialog(error: unknown): StartupFailureDialog | nul
 /** Filesystem locations of the three shared capability extensions injected into extension-based harnesses. */
 export interface CapabilityExtensionPaths {
   schedule: string
-  browser: string
+  terminal: string
   askUser: string
 }
 
 /**
  * Runtime environment for the extension-injected harnesses (OMP and pi, which
  * share pi's ancestral extension API): the capability-broker variables from
- * the schedule bridge and lazily enabled browser bridge minus the Prime-only
- * --skill paths, plus the three PRIME_WORK_*_EXTENSION_PATH variables the harness adapters turn
- * into --extension argv. Both harnesses must receive the identical surface.
+ * the schedule and terminal bridges minus the Prime-only --skill paths, plus
+ * the PRIME_WORK_*_EXTENSION_PATH variables the harness adapters turn into
+ * --extension argv. Both harnesses must receive the identical surface.
  */
 export function extensionRuntimeEnvironment(
   scheduleBridgeEnvironment: NodeJS.ProcessEnv,
-  browserBridgeEnvironment: () => NodeJS.ProcessEnv,
+  terminalBridgeEnvironment: () => NodeJS.ProcessEnv,
   extensionPaths: CapabilityExtensionPaths,
   askUserEnabled = true,
-  browserEnabled = true,
 ): NodeJS.ProcessEnv {
   const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = scheduleBridgeEnvironment
-  const browserEnvironment = browserEnabled ? browserBridgeEnvironment() : {}
-  const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...runtimeBrowserEnvironment } = browserEnvironment
   return {
     ...scheduleEnvironment,
-    ...runtimeBrowserEnvironment,
+    ...terminalBridgeEnvironment(),
     PRIME_WORK_SCHEDULE_EXTENSION_PATH: extensionPaths.schedule,
-    PRIME_WORK_BROWSER_EXTENSION_PATH: browserEnabled ? extensionPaths.browser : undefined,
     PRIME_WORK_ASK_USER_EXTENSION_PATH: askUserEnabled ? extensionPaths.askUser : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
   }
 }
-
 export async function settleShutdown(
   steps: ReadonlyArray<PromiseLike<unknown>>,
   options: { watchdogMs?: number; log?: (message: string) => void } = {},
@@ -567,12 +558,34 @@ async function bootstrap(): Promise<void> {
   configureGooeyPiAgentMessageSigning(loadOrCreateGooeyPiAgentMessageKey(join(userDataPath, 'agent-message-signing.key')))
   const stateStore = await openDesktopStateStore(userDataPath)
   store = stateStore
+  // Sessions started without a project run in this app-managed directory.
+  // It is authorized for agent runtimes but never becomes a project grant, so
+  // the agent's file access stays scoped to GooeyPi-owned scratch space.
+  await mkdir(join(userDataPath, 'workspace'), { recursive: true })
+  const globalWorkspaceDir = await realpath(join(userDataPath, 'workspace'))
+  try {
+    await writeFile(join(globalWorkspaceDir, 'AGENTS.md'), [
+      '# GooeyPi workspace',
+      '',
+      'This directory is GooeyPi\'s app-managed workspace for sessions started without a project.',
+      'Use the gooeypi_session_* tools to list, read, message, and create threads across every GooeyPi project.',
+      'Keep any files you create inside this directory unless the user asks otherwise.',
+      '',
+    ].join('\n'), { flag: 'wx' })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const authorizeAgentCwd = (service: ProjectService) => async (cwd: string): Promise<string> => {
+    const canonical = await realpath(cwd)
+    if (canonical === globalWorkspaceDir) return canonical
+    return service.authorizeCwd(cwd)
+  }
   backgroundMode = new MacBackgroundController({
     iconPath: appIconPath(),
     getSettings: () => stateStore.getSettings(),
     onOpen: () => requestWindow('menu bar'),
     onSettings: () => requestWindow('settings', (window) => {
-      if (!window.webContents.isDestroyed()) window.webContents.send('app:open-settings')
+      sendToTrustedRenderer(window.webContents, trustedRendererUrl, 'app:open-settings', undefined)
     }),
     onQuit: () => app.quit(),
     startInBackground,
@@ -590,9 +603,9 @@ async function bootstrap(): Promise<void> {
   const ompSessions = new SessionService(stateStore, null, undefined, ompSessionServiceOptions())
   // Pi likewise has no live-CLI overlay; its catalog is JSONL-only.
   const piSessions = new SessionService(stateStore, null, undefined, piSessionServiceOptions())
-  const projects = new ProjectService(stateStore, () => mainWindow)
-  const ompProjects = new ProjectService(stateStore, () => mainWindow, 'omp')
-  const piProjects = new ProjectService(stateStore, () => mainWindow, 'pi')
+  const projects = new ProjectService(stateStore, () => mainWindow, 'prime', undefined, [globalWorkspaceDir])
+  const ompProjects = new ProjectService(stateStore, () => mainWindow, 'omp', undefined, [globalWorkspaceDir])
+  const piProjects = new ProjectService(stateStore, () => mainWindow, 'pi', undefined, [globalWorkspaceDir])
   const repositoryUseGate = new RepositoryUseGate()
   const checkouts: Record<HarnessId, CheckoutService> = {
     prime: new CheckoutService(() => stateStore.getSettings().checkoutStrategy, projects, repositoryUseGate),
@@ -644,7 +657,7 @@ async function bootstrap(): Promise<void> {
   const piCatalog = new PiModelCatalogService(piExecutable)
   agents = new AgentRpcManager(
     primeExecutable,
-    (cwd) => projects.authorizeCwd(cwd),
+    authorizeAgentCwd(projects),
     (path) => sessions.requireSessionPath(path),
     providers,
     disabledProviders,
@@ -657,7 +670,7 @@ async function bootstrap(): Promise<void> {
   // provider policy and OMP's own CLI configuration.
   const ompManager = new AgentRpcManager(
     ompExecutable,
-    (cwd) => ompProjects.authorizeCwd(cwd),
+    authorizeAgentCwd(ompProjects),
     (path) => ompSessions.requireSessionPath(path),
     ompCatalog,
     ompDisabledProviders,
@@ -674,7 +687,7 @@ async function bootstrap(): Promise<void> {
   // permission system, so the manager keeps its default (undefined) override.
   const piManager = new AgentRpcManager(
     piExecutable,
-    (cwd) => piProjects.authorizeCwd(cwd),
+    authorizeAgentCwd(piProjects),
     (path) => piSessions.requireSessionPath(path),
     piCatalog,
     piDisabledProviders,
@@ -768,9 +781,9 @@ async function bootstrap(): Promise<void> {
   const scheduleSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'prime-work-schedules')
     : join(app.getAppPath(), 'assets', 'skills', 'prime-work-schedules')
-  const browserSkillPath = app.isPackaged
-    ? join(process.resourcesPath, 'skills', 'prime-work-browser')
-    : join(app.getAppPath(), 'assets', 'skills', 'prime-work-browser')
+  const egoBrowserSkillPath = app.isPackaged
+    ? join(process.resourcesPath, 'skills', 'ego-browser')
+    : join(app.getAppPath(), 'assets', 'skills', 'ego-browser')
   const computerUseSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'gooeypi-computer-use', 'SKILL.md')
     : join(app.getAppPath(), 'assets', 'skills', 'gooeypi-computer-use', 'SKILL.md')
@@ -781,8 +794,7 @@ async function bootstrap(): Promise<void> {
   }
   const extensionPathFor = (harness: HarnessId, capability: ExtensionCapability): string =>
     resolveExtensionPath(extensionInjection(harness, capability).filename, extensionPathContext)
-  const primeBrowserExtensionPath = extensionPathFor('prime', 'browser')
-  const ompBrowserExtensionPath = extensionPathFor('omp', 'browser')
+  const terminalExtensionPath = extensionPathFor('prime', 'terminal')
   const ompScheduleExtensionPath = extensionPathFor('omp', 'schedule')
   const ompAskUserExtensionPath = extensionPathFor('omp', 'askUser')
   const collaborationExtensionPath = extensionPathFor('omp', 'collaboration')
@@ -797,6 +809,16 @@ async function bootstrap(): Promise<void> {
       availability: { available: status.available, detail: status.detail, actionUrl: status.available ? undefined : status.installUrl },
     }
   }
+  const egoBrowserSkill = async () => {
+    const status = await probeEgoBrowser()
+    return {
+      id: 'ego-browser', name: 'Browser | Ego Lite',
+      description: 'Drive the separately installed ego lite browser through the ego-browser CLI. Install ego lite before enabling.',
+      kind: 'skill' as const, location: 'system' as const, path: egoBrowserSkillPath,
+      enabled: stateStore.getSettings().browserEnabled,
+      availability: { available: status.available, detail: status.detail, actionUrl: status.available ? undefined : status.installUrl },
+    }
+  }
   const plugins = new PluginService(primeExecutable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: async () => [{
       id: 'prime-work-schedules', name: 'Scheduled tasks',
@@ -806,11 +828,7 @@ async function bootstrap(): Promise<void> {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'Ask focused multiple-choice questions in the GooeyPi app across Prime, OMP, and Pi.',
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
-    }, {
-      id: 'prime-work-browser', name: 'Browser',
-      description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
-      kind: 'skill', location: 'system', path: browserSkillPath, enabled: stateStore.getSettings().browserEnabled,
-    }, await computerUseSkill(), ...providers.mcpCapabilities()],
+    }, await egoBrowserSkill(), await computerUseSkill(), ...providers.mcpCapabilities()],
   })
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
     harness: 'omp',
@@ -818,11 +836,7 @@ async function bootstrap(): Promise<void> {
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'OMP extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
-    }, {
-      id: 'omp-work-browser', name: 'Browser',
-      description: 'OMP extension for driving this thread\'s in-app browser.',
-      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: stateStore.getSettings().browserEnabled,
-    }, {
+    }, await egoBrowserSkill(), {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'OMP extension for asking focused multiple-choice questions in the GooeyPi app.',
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
@@ -836,11 +850,7 @@ async function bootstrap(): Promise<void> {
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'Pi extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
-    }, {
-      id: 'omp-work-browser', name: 'Browser',
-      description: 'Pi extension for driving this thread\'s in-app browser.',
-      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: stateStore.getSettings().browserEnabled,
-    }, {
+    }, await egoBrowserSkill(), {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'Pi extension for asking focused multiple-choice questions in the GooeyPi app.',
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
@@ -932,16 +942,12 @@ async function bootstrap(): Promise<void> {
       return { projectId: project.id, sessionId: scheduledSession?.id }
     },
   })
-  const browserService = new AgentBrowserService({
-    getGuest: (webContentsId) => {
-      const contents = webContents.fromId(webContentsId)
-      return contents && !contents.isDestroyed() ? contents : undefined
-    },
-  })
-  agentBrowser = browserService
-  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: primeBrowserExtensionPath, skillPath: browserSkillPath })
+  const sendAgentTerminalRequest = (channel: 'terminal:agent-open' | 'terminal:agent-close', payload: Record<string, unknown>): boolean =>
+    !shutdownStarted && sendToTrustedRenderer(mainWindow?.webContents, trustedRendererUrl, channel, payload)
+  const terminalBridge = new AgentTerminalBridge({ terminals, extensionPath: terminalExtensionPath, sendRequest: sendAgentTerminalRequest })
   const collaborationBridge = new AgentCollaborationBridge({
     extensionPath: collaborationExtensionPath,
+    globalWorkspaceDir,
     sessions: { prime: sessions, omp: ompSessions, pi: piSessions },
     agents: { prime: agents, omp: ompManager, pi: piManager },
     catalogs: { prime: providers, omp: ompCatalog, pi: piCatalog },
@@ -952,16 +958,16 @@ async function bootstrap(): Promise<void> {
     scheduleBridge.start(),
     ompScheduleBridge.start(),
     piScheduleBridge.start(),
-    browserBridge.start(),
+    terminalBridge.start(),
     collaborationBridge.start(),
   ])
   agentScheduleBridges = [scheduleBridge, ompScheduleBridge, piScheduleBridge]
-  agentBrowserBridge = browserBridge
+  agentTerminalBridge = terminalBridge
   agentCollaborationBridge = collaborationBridge
   const revokeRuntimeCapabilities = (environment: NodeJS.ProcessEnv, runtimeScheduleBridge: AgentScheduleBridge): void => {
     const claims: Array<[string, { revoke(token: string | undefined): boolean }, string | undefined]> = [
       ['schedule', runtimeScheduleBridge, environment.PRIME_WORK_SCHEDULE_TOKEN],
-      ['browser', browserBridge, environment.PRIME_WORK_BROWSER_TOKEN],
+      ['terminal', terminalBridge, environment.PRIME_WORK_TERMINAL_TOKEN],
       ['collaboration', collaborationBridge, environment.GOOEYPI_COLLABORATION_TOKEN],
     ]
     for (const [name, bridge, token] of claims) {
@@ -972,48 +978,51 @@ async function bootstrap(): Promise<void> {
   }
   agents.setRuntimeEnvironmentProvider((scope) => ({
     ...scheduleBridge.environmentFor(scope),
-    ...(stateStore.getSettings().browserEnabled ? browserBridge.environmentFor(scope) : {}),
+    ...terminalBridge.environmentFor(scope),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'prime' }),
     PRIME_WORK_ASK_USER_EXTENSION_PATH: stateStore.getSettings().askUserEnabled && scope.interactive ? ompAskUserExtensionPath : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
+    GOOEYPI_EGO_BROWSER_SKILL_PATH: stateStore.getSettings().browserEnabled ? egoBrowserSkillPath : undefined,
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
   agents.setRuntimeStartListener((environment, info) => {
-    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    terminalBridge.bindSession(environment.PRIME_WORK_TERMINAL_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   agents.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, scheduleBridge))
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
-  // extensions. OMP has no --skill flag, so their tool descriptions carry the
-  // app-specific usage guidance while OMP's own skills stay discovery-based.
+  // extensions. OMP has no --skill flag, so the ego-browser skill reaches OMP
+  // agents through OMP's own skill discovery (~/.agents/skills et al).
   const capabilityExtensionPaths: CapabilityExtensionPaths = {
     schedule: ompScheduleExtensionPath,
-    browser: ompBrowserExtensionPath,
+    terminal: terminalExtensionPath,
     askUser: ompAskUserExtensionPath,
   }
   ompManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), () => browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), () => terminalBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'omp' }),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
+    GOOEYPI_EGO_BROWSER_SKILL_PATH: stateStore.getSettings().browserEnabled ? egoBrowserSkillPath : undefined,
   }))
   ompManager.setRuntimeStartListener((environment, info) => {
-    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    terminalBridge.bindSession(environment.PRIME_WORK_TERMINAL_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   ompManager.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, ompScheduleBridge))
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), () => browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), () => terminalBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'pi' }),
     GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: piFastModeExtensionPath,
+    GOOEYPI_EGO_BROWSER_SKILL_PATH: stateStore.getSettings().browserEnabled ? egoBrowserSkillPath : undefined,
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
   piManager.setRuntimeStartListener((environment, info) => {
-    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    terminalBridge.bindSession(environment.PRIME_WORK_TERMINAL_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   piManager.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, piScheduleBridge))
@@ -1023,6 +1032,7 @@ async function bootstrap(): Promise<void> {
     platform: process.platform,
     homeDir: homedir(),
     harnesses: initialHarnesses,
+    globalWorkspaceDir,
   }
   const updates = new UpdateService(getAutoUpdater(), { enabled: app.isPackaged })
   updateService = updates
@@ -1034,7 +1044,7 @@ async function bootstrap(): Promise<void> {
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, refreshHarnesses, projects, checkouts, sessions, agents, terminals, git, plugins, providers, settings, updates, cuaDriver, heartbeats, schedules, browser: browserService, voice, pets, supabaseAuth,
+    meta, refreshHarnesses, projects, checkouts, sessions, agents, terminals, agentTerminal: terminalBridge, git, plugins, providers, settings, updates, cuaDriver, heartbeats, schedules, voice, pets, supabaseAuth,
     popupApplicationMenu, setTitleBarTheme,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
     pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
@@ -1043,31 +1053,16 @@ async function bootstrap(): Promise<void> {
   // Both managers share the one renderer forwarding path: envelopes carry the
   // runtimeId and RuntimeInfo carries the harness, so the renderer can route.
   const forwardAgentEvent = (envelope: PrimeEventEnvelope): void => {
-    const renderer = mainWindow?.webContents
-    if (!shutdownStarted && renderer && !renderer.isDestroyed()
-      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
-      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
-      renderer.send('agent:event', envelope)
-    }
+    if (!shutdownStarted) sendToTrustedRenderer(mainWindow?.webContents, trustedRendererUrl, 'agent:event', envelope)
   }
   agents.setEventSink(forwardAgentEvent)
   ompManager.setEventSink(forwardAgentEvent)
   piManager.setEventSink(forwardAgentEvent)
   providers.setEventSink((event: ProviderAuthEvent) => {
-    const renderer = mainWindow?.webContents
-    if (!shutdownStarted && renderer && !renderer.isDestroyed()
-      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
-      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
-      renderer.send('providers:auth-event', event)
-    }
+    if (!shutdownStarted) sendToTrustedRenderer(mainWindow?.webContents, trustedRendererUrl, 'providers:auth-event', event)
   })
   updates.setEventSink((state: AppUpdateState) => {
-    const renderer = mainWindow?.webContents
-    if (!shutdownStarted && renderer && !renderer.isDestroyed()
-      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
-      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
-      renderer.send('updates:changed', state)
-    }
+    if (!shutdownStarted) sendToTrustedRenderer(mainWindow?.webContents, trustedRendererUrl, 'updates:changed', state)
   })
   installApplicationMenu({
     appName: 'GooeyPi',
@@ -1134,10 +1129,16 @@ else void app.whenReady().then(async () => {
   const browserSession = session.defaultSession
   browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes = permission === 'media' && 'mediaTypes' in details ? details.mediaTypes : undefined
-    callback(permission === 'media' && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, mediaTypes))
+    try {
+      callback(permission === 'media' && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, mediaTypes))
+    } catch { callback(false) }
   })
-  browserSession.setPermissionCheckHandler((contents, permission, _origin, details) => Boolean(contents && permission === 'media' && details.isMainFrame
-    && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, details.mediaType ? [details.mediaType] : undefined)))
+  browserSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
+    try {
+      return Boolean(contents && permission === 'media' && details.isMainFrame
+        && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, details.mediaType ? [details.mediaType] : undefined))
+    } catch { return false }
+  })
   const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserProfile.setPermissionCheckHandler(() => false)
@@ -1194,10 +1195,9 @@ app.on('before-quit', (event) => {
   beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
   providerService?.cancelAll()
-  agentBrowser?.beginShutdown()
   void settleShutdown([
     ...agentScheduleBridges.map((bridge) => bridge.stop()),
-    agentBrowserBridge?.stop() ?? Promise.resolve(),
+    agentTerminalBridge?.stop() ?? Promise.resolve(),
     agentCollaborationBridge?.stop() ?? Promise.resolve(),
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),

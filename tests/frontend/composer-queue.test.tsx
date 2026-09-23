@@ -20,7 +20,7 @@ describe('composer queue tray', () => {
     container.remove()
   })
 
-  it('shows queued messages with immediate send, edit, and delete actions', () => {
+  it('shows queued messages with immediate send, edit, and delete actions', async () => {
     const onSend = vi.fn()
     const onEdit = vi.fn()
     const onDelete = vi.fn()
@@ -62,9 +62,9 @@ describe('composer queue tray', () => {
       'Delete queued message',
     ])
 
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Send queued message immediately"]')?.click())
-    expect(onDelete).toHaveBeenCalledWith(queued)
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label^="Send queued message immediately"]')?.click(); await Promise.resolve() })
     expect(onSend).toHaveBeenCalledWith('run tests', [], 'steer')
+    expect(onDelete).toHaveBeenCalledWith(queued)
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Edit queued message"]')?.click())
     expect(onEdit).toHaveBeenCalledWith(queued)

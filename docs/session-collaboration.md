@@ -1,6 +1,6 @@
 # Session collaboration
 
-GooeyPi lets top-level sessions in the same harness and working directory coordinate without turning them into parent/child subagents. In the composer, type `@` and part of a sidebar session title, then select the result. The visible `@title` is sent with a model-only routing block containing the stable session UUID. A session's context menu also exposes **Copy session UUID** for explicit coordination prompts.
+GooeyPi lets top-level sessions in the same harness and working directory coordinate without turning them into parent/child subagents. Sessions started from the sidebar's GooeyPi group run in the app-managed workspace directory instead of a project; their peer set is every session in the harness, so they can read, message, and create threads across all projects. In the composer, type `@` and part of a sidebar session title, then select the result. The visible `@title` is sent with a model-only routing block containing the stable session UUID. A session's context menu also exposes **Copy session UUID** for explicit coordination prompts.
 
 Every Prime, OMP, and pi runtime receives six app-owned tools:
 
@@ -26,7 +26,7 @@ Using Prime's daemon transport only for Prime would create three different seman
 
 ## Trust and lifecycle boundaries
 
-- Access is same-harness, same-canonical-working-directory, and excludes the caller. A multi-folder workspace does not silently widen one session's authority to its other roots, and harness-scoped project grants never authorize another harness.
+- Access is same-harness, same-canonical-working-directory, and excludes the caller — except for sessions rooted in GooeyPi's own workspace directory, which see every session in their harness. A multi-folder workspace does not silently widen one session's authority to its other roots, and harness-scoped project grants never authorize another harness.
 - Every runtime receives a separate random bearer token bound to its immutable harness/session claim. Tokens stay in the child environment and never cross renderer IPC.
 - Target UUIDs are exact and validated. Titles are display-only; `@title` resolution happens in the renderer against the visible sidebar catalog.
 - Session creation cannot select another harness or working directory. Model discovery excludes hidden, disabled, and unavailable providers/models, and creation goes through the owning manager's normal cwd, model, and reasoning validation before a prompt is accepted.

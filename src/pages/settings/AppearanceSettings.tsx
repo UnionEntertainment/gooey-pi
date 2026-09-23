@@ -23,8 +23,8 @@ const locales: Array<{ value: LocalePreference; label: MessageKey }> = [
   { value: 'zh-CN', label: 'appearance.language.chinese' },
 ]
 
-/** Arrow/Home/End movement inside a radio group selects as it moves. */
-function nextScaleIndex(key: string, current: number, count: number): number | null {
+/** Arrow/Home/End movement inside a radio group or tab list selects as it moves. */
+export function nextChoiceIndex(key: string, current: number, count: number): number | null {
   if (key === 'ArrowRight' || key === 'ArrowDown') return (current + 1) % count
   if (key === 'ArrowLeft' || key === 'ArrowUp') return (current - 1 + count) % count
   if (key === 'Home') return 0
@@ -35,25 +35,35 @@ function nextScaleIndex(key: string, current: number, count: number): number | n
 export function AppearanceSettings({ settings, onUpdate }: SettingsSectionProps) {
   const { t } = useI18n()
   const selectedScale = Math.max(0, fontScales.findIndex((option) => option.value === settings.interfaceFontScale))
+  const selectedTheme = Math.max(0, themes.findIndex((item) => item.id === settings.theme))
   const onScaleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const next = nextScaleIndex(event.key, selectedScale, fontScales.length)
+    const next = nextChoiceIndex(event.key, selectedScale, fontScales.length)
     if (next === null) return
     event.preventDefault()
     const target = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]
     target?.focus()
     void onUpdate({ interfaceFontScale: fontScales[next].value })
   }
+  const onThemeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextChoiceIndex(event.key, selectedTheme, themes.length)
+    if (next === null) return
+    event.preventDefault()
+    const target = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]
+    target?.focus()
+    void onUpdate({ theme: themes[next].id })
+  }
   return (
     <>
       <header><h1>{t('appearance.title')}</h1><p>{t('appearance.description')}</p></header>
       <section className="settings-group">
         <h2>{t('appearance.theme.title')}</h2>
-        <div className="theme-options">
-          {themes.map((item) => {
+        <div className="theme-options" role="radiogroup" aria-label={t('appearance.theme.aria')} onKeyDown={onThemeKeyDown}>
+          {themes.map((item, index) => {
             const Icon = item.icon
+            const active = settings.theme === item.id
             return (
-              <button type="button" key={item.id} className={settings.theme === item.id ? 'is-active' : ''} onClick={() => { void onUpdate({ theme: item.id }) }}>
-                <span><Icon size={17} /></span><strong>{t(item.label)}</strong>{settings.theme === item.id ? <Check size={13} /> : null}
+              <button type="button" key={item.id} role="radio" aria-checked={active} tabIndex={index === selectedTheme ? 0 : -1} className={active ? 'is-active' : ''} onClick={() => { void onUpdate({ theme: item.id }) }}>
+                <span><Icon size={17} /></span><strong>{t(item.label)}</strong>{active ? <Check size={13} /> : null}
               </button>
             )
           })}

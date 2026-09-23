@@ -24,46 +24,44 @@ import { OMP_RPC_ADAPTER, PI_RPC_ADAPTER, PRIME_RPC_ADAPTER } from '../../electr
 
 const extensionPaths: CapabilityExtensionPaths = {
   schedule: '/app/extensions/omp-work-schedules.ts',
-  browser: '/app/extensions/omp-work-browser.ts',
+  terminal: '/app/extensions/omp-work-terminal.ts',
   askUser: '/app/extensions/omp-work-ask-user.ts',
 }
 
-/** What the schedule and browser bridges hand every runtime of the harness. */
+/** What the schedule and terminal bridges hand every runtime of the harness. */
 const scheduleBridgeEnvironment = {
   PRIME_WORK_SCHEDULE_URL: 'http://127.0.0.1:45001',
   PRIME_WORK_SCHEDULE_TOKEN: 'schedule-token',
   PRIME_WORK_SCHEDULE_SKILL_PATH: '/app/skills/prime-work-schedules',
 }
-const browserBridgeEnvironment = {
-  PRIME_WORK_BROWSER_URL: 'http://127.0.0.1:45002',
-  PRIME_WORK_BROWSER_TOKEN: 'browser-token',
-  PRIME_WORK_BROWSER_EXTENSION_PATH: '/app/extensions/prime-work-browser.ts',
-  PRIME_WORK_BROWSER_SKILL_PATH: '/app/skills/prime-work-browser',
+const terminalBridgeEnvironment = {
+  PRIME_WORK_TERMINAL_URL: 'http://127.0.0.1:45002',
+  PRIME_WORK_TERMINAL_TOKEN: 'terminal-token',
+  PRIME_WORK_TERMINAL_EXTENSION_PATH: '/app/extensions/omp-work-terminal.ts',
 }
 
 describe('capability extension environment parity (OMP and pi)', () => {
   it('populates the three shared extension paths and strips the Prime-only skill paths', () => {
-    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => browserBridgeEnvironment, extensionPaths)
+    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => terminalBridgeEnvironment, extensionPaths)
 
     expect(environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH).toBe('/app/extensions/omp-work-schedules.ts')
-    expect(environment.PRIME_WORK_BROWSER_EXTENSION_PATH).toBe('/app/extensions/omp-work-browser.ts')
+    expect(environment.PRIME_WORK_TERMINAL_EXTENSION_PATH).toBe('/app/extensions/omp-work-terminal.ts')
     expect(environment.PRIME_WORK_ASK_USER_EXTENSION_PATH).toBe('/app/extensions/omp-work-ask-user.ts')
     expect(environment.GOOEYPI_MANAGES_ASK_USER).toBe('1')
     // The Prime-only --skill inputs never reach an extension-based harness.
     expect(environment.PRIME_WORK_SCHEDULE_SKILL_PATH).toBeUndefined()
-    expect(environment.PRIME_WORK_BROWSER_SKILL_PATH).toBeUndefined()
     // The loopback-broker contract from both bridges is preserved untouched.
     expect(environment.PRIME_WORK_SCHEDULE_URL).toBe('http://127.0.0.1:45001')
     expect(environment.PRIME_WORK_SCHEDULE_TOKEN).toBe('schedule-token')
-    expect(environment.PRIME_WORK_BROWSER_URL).toBe('http://127.0.0.1:45002')
-    expect(environment.PRIME_WORK_BROWSER_TOKEN).toBe('browser-token')
+    expect(environment.PRIME_WORK_TERMINAL_URL).toBe('http://127.0.0.1:45002')
+    expect(environment.PRIME_WORK_TERMINAL_TOKEN).toBe('terminal-token')
   })
 
   it.each([
     ['omp', OMP_RPC_ADAPTER],
     ['pi', PI_RPC_ADAPTER],
   ] as const)('turns the shared environment into all three --extension injections for %s runtimes', (_harness, adapter) => {
-    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => browserBridgeEnvironment, extensionPaths)
+    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => terminalBridgeEnvironment, extensionPaths)
     const args = adapter.buildStartArgs({ cwd: '/work', environment })
 
     const injected: string[] = []
@@ -72,7 +70,7 @@ describe('capability extension environment parity (OMP and pi)', () => {
     }
     expect(injected).toEqual([
       '/app/extensions/omp-work-schedules.ts',
-      '/app/extensions/omp-work-browser.ts',
+      '/app/extensions/omp-work-terminal.ts',
       '/app/extensions/omp-work-ask-user.ts',
     ])
     // Neither extension-based harness receives Prime's --skill injections.
@@ -81,7 +79,7 @@ describe('capability extension environment parity (OMP and pi)', () => {
 
   it('injects the Pi-only fast-mode compatibility extension without adding it to OMP', () => {
     const environment = {
-      ...extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => browserBridgeEnvironment, extensionPaths),
+      ...extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => terminalBridgeEnvironment, extensionPaths),
       GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/app/extensions/pi-work-fast-mode.ts',
     }
     expect(PI_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment })).toContain('/app/extensions/pi-work-fast-mode.ts')
@@ -89,25 +87,12 @@ describe('capability extension environment parity (OMP and pi)', () => {
   })
 
   it('keeps standalone copies suppressed while omitting the bundled tool when disabled', () => {
-    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => browserBridgeEnvironment, extensionPaths, false)
+    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, () => terminalBridgeEnvironment, extensionPaths, false)
     expect(environment.GOOEYPI_MANAGES_ASK_USER).toBe('1')
     expect(environment.PRIME_WORK_ASK_USER_EXTENSION_PATH).toBeUndefined()
     for (const adapter of [OMP_RPC_ADAPTER, PI_RPC_ADAPTER]) {
       expect(adapter.buildStartArgs({ cwd: '/work', environment })).not.toContain(extensionPaths.askUser)
     }
-  })
-
-  it.each([
-    ['omp', OMP_RPC_ADAPTER],
-    ['pi', PI_RPC_ADAPTER],
-  ] as const)('does not mint or inject a browser claim for %s when Browser is disabled', (_harness, adapter) => {
-    const mintBrowserClaim = vi.fn(() => browserBridgeEnvironment)
-    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, mintBrowserClaim, extensionPaths, true, false)
-    expect(mintBrowserClaim).not.toHaveBeenCalled()
-    expect(environment.PRIME_WORK_BROWSER_EXTENSION_PATH).toBeUndefined()
-    expect(environment.PRIME_WORK_BROWSER_URL).toBeUndefined()
-    expect(environment.PRIME_WORK_BROWSER_TOKEN).toBeUndefined()
-    expect(adapter.buildStartArgs({ cwd: '/work', environment })).not.toContain(extensionPaths.browser)
   })
 
   it('injects the bundled ask_user extension into Prime interactive runtimes', () => {

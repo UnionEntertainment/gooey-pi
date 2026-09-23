@@ -748,7 +748,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [], voiceMethods: voice && typeof voice === 'object' ? Object.keys(voice).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'updates', 'voice'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'updates', 'voice'])
     expect(bridge.voiceMethods).toContain('testSelfHosted')
     const updateMenu = await app!.evaluate(({ Menu }) => {
       const parents = Menu.getApplicationMenu()?.items ?? []
@@ -1041,7 +1041,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: /Models/ }).click()
 
     const toggle = page.getByRole('checkbox', { name: 'Show GPT Fixture model' })
-    const groupHeader = page.locator('.provider-model-group__heading[aria-controls="provider-models-openai-codex"]')
+    const groupHeader = page.locator('.provider-model-group__heading').filter({ hasText: 'openai-codex' })
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await groupHeader.click()
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
@@ -1057,9 +1057,9 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(toggle).not.toBeChecked()
     await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledModels).toEqual(['openai-codex/gpt-fixture'])
     await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledProviders).toEqual(['openai-codex'])
-    const groups = page.locator('.provider-model-group')
-    await expect(groups.nth(0)).toContainText('Claude Fixture')
-    await expect(groups.nth(1)).toContainText('GPT Fixture')
+    const modelRows = page.locator('.provider-model-row')
+    await expect(modelRows.nth(0)).toContainText('Claude Fixture')
+    await expect(modelRows.nth(1)).toContainText('GPT Fixture')
 
     const voiceModels = await page.evaluate(async () => JSON.parse((await window.prime.voice.executeTool({ name: 'list_models', arguments: {} }, 'omp')).output) as { models: Array<{ name: string }> })
     expect(voiceModels.models.map((model) => model.name)).toEqual(['Claude Fixture'])
@@ -1135,7 +1135,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName(/Model: Claude Fixture · Effort: /)
     const composer = page.getByRole('combobox', { name: 'Message OMP' })
     await composer.fill('Connect to the newly installed harness')
     await composer.press('Enter')
@@ -1179,7 +1179,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     await primaryRow.locator('.session-row').click()
     await expect(primaryRow).not.toHaveClass(/has-attention/)
-    await expect(primaryRow).toHaveClass(/session-row-wrap--failed/)
+    await expect(failureMark).toBeVisible()
     await expect(failureMark).toHaveAttribute('title', 'Failed — notification cleared')
     await expect.poll(() => failureMark.locator('> span').evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(activeFailureColor)
     await expect(activityCount).toHaveCount(0)
@@ -1301,6 +1301,42 @@ test.describe('Prime Work desktop smoke', () => {
     }
   })
 
+  test('opens and stops named terminal tabs for agent terminal requests', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const projectCwd = realpathSync(join(fixtureRoot, 'secondary-project'))
+    await app!.evaluate(({ ipcMain }) => {
+      ;(globalThis as Record<string, unknown>).__agentTerminalReplies = []
+      ipcMain.on('terminal:agent-result', (_event, requestId, result) => {
+        ;((globalThis as Record<string, unknown>).__agentTerminalReplies as unknown[]).push({ requestId, result })
+      })
+    })
+    const sendAgentRequest = (channel: 'terminal:agent-open' | 'terminal:agent-close', payload: Record<string, unknown>) =>
+      app!.evaluate(({ BrowserWindow }, args) => {
+        BrowserWindow.getAllWindows()[0].webContents.send(args.channel, args.payload)
+      }, { channel, payload })
+    const openPayload = (requestId: string, command: string, label: string) => ({ requestId, sessionPath: fixtureSessionFile, cwd: projectCwd, command, label })
+
+    await sendAgentRequest('terminal:agent-open', openPayload('agent-backend', 'echo AGENT_BACKEND_MARKER; sleep 60', 'backend'))
+    const drawer = page.locator('.terminal-drawer:not([hidden])')
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('.terminal-tab')).toHaveCount(1)
+    await sendAgentRequest('terminal:agent-open', openPayload('agent-frontend', 'echo AGENT_FRONTEND_MARKER; sleep 60', 'frontend'))
+    await expect(drawer.locator('.terminal-tab')).toHaveCount(2)
+    // xterm's DOM renderer only paints the visible tab, so activate each tab
+    // before asserting its command output.
+    for (const [label, marker] of [['backend', 'AGENT_BACKEND_MARKER'], ['frontend', 'AGENT_FRONTEND_MARKER']] as const) {
+      await drawer.getByRole('tab', { name: new RegExp(label) }).click()
+      await expect.poll(async () => (await drawer.locator('.xterm-rows:visible').innerText())).toContain(marker)
+    }
+    const replies = () => app!.evaluate(() => (globalThis as Record<string, unknown>).__agentTerminalReplies as Array<{ requestId: string; result: { ok: boolean } }>)
+    await expect.poll(async () => (await replies()).filter((reply) => reply.result.ok).map((reply) => reply.requestId)).toEqual(['agent-backend', 'agent-frontend'])
+
+    await sendAgentRequest('terminal:agent-close', { requestId: 'agent-close-1', id: 'agent-backend', sessionPath: fixtureSessionFile })
+    await expect(drawer.locator('.terminal-tab')).toHaveCount(1)
+    await expect(drawer.locator('.terminal-tab')).toContainText('frontend')
+    await expect.poll(async () => (await replies()).find((reply) => reply.requestId === 'agent-close-1')?.result.ok).toBe(true)
+  })
+
   test('enforces the live preload and IPC frame boundaries', async () => {
     const initialMeta = await page.evaluate(() => window.prime.app.getMeta())
     expect(initialMeta.version).toBeTruthy()
@@ -1395,11 +1431,15 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('keeps session options visible and starts a new session from a hovered project', async () => {
-    const sessionOptions = page.locator('.session-row__more').first()
-    await expect(sessionOptions).toBeVisible()
-    await expect.poll(() => sessionOptions.evaluate((node) => getComputedStyle(node).opacity)).toBe('1')
+    const sessionActions = page.locator('.session-row__actions').first()
+    const sessionWrap = page.locator('.session-row-wrap').first()
+    await expect.poll(() => sessionActions.evaluate((node) => getComputedStyle(node).opacity)).toBe('0')
+    await expect.poll(async () => {
+      await sessionWrap.hover()
+      return sessionActions.evaluate((node) => getComputedStyle(node).opacity)
+    }).toBe('1')
 
-    const projectRow = page.locator('.project-row').first()
+    const projectRow = page.locator('.project-row').filter({ hasText: 'Multi-folder fixture' })
     const projectSession = projectRow.getByRole('button', { name: /^New session in / })
     await expect.poll(() => projectSession.evaluate((node) => getComputedStyle(node).opacity)).toBe('0')
     await expect.poll(async () => {
@@ -1482,7 +1522,7 @@ test.describe('Prime Work desktop smoke', () => {
     const selected = page.locator('.session-row-wrap.is-selected .session-row')
     await selected.click({ button: 'right' })
     const sessionMenu = page.getByLabel('Session options')
-    await sessionMenu.getByRole('button', { name: 'Copy session UUID' }).click()
+    await sessionMenu.getByRole('menuitem', { name: 'Copy session UUID' }).click()
     await expect.poll(() => page.evaluate(() => (window as Window & { __copiedSessionId?: string }).__copiedSessionId)).toBe('fixture-session')
 
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
@@ -1510,7 +1550,7 @@ test.describe('Prime Work desktop smoke', () => {
       type: 'message', id: 'fixture-session-reference', parentId: 'fixture-goal-summary', timestamp: new Date().toISOString(),
       message: { role: 'user', content: sent.message, timestamp: new Date().toISOString() },
     })}\n`)
-    await page.locator('.session-row-wrap').filter({ hasText: 'Ownership peer fixture' }).locator('.session-row').click()
+    await page.locator('.session-row-wrap').filter({ has: page.locator('.session-row__title', { hasText: /^Ownership peer fixture$/ }) }).locator('.session-row').click()
     await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
     const userMessage = page.locator('.message--user').filter({ hasText: 'Coordinate with @Ownership peer fixture about ownership' })
     await expect(userMessage).toBeVisible()
@@ -1520,11 +1560,11 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(linkedMention).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect(linkedMention).toHaveCSS('border-top-width', '0px')
     await linkedMention.click()
-    await expect(page.locator('.session-row-wrap').filter({ hasText: 'Ownership peer fixture' })).toHaveClass(/is-selected/)
+    await expect(page.locator('.session-row-wrap').filter({ has: page.locator('.session-row__title', { hasText: /^Ownership peer fixture$/ }) })).toHaveClass(/is-selected/)
   })
 
   test('removes a project from the sidebar through its context menu', async () => {
-    const projectRow = page.locator('.project-row').first()
+    const projectRow = page.locator('.project-row').filter({ hasText: 'Multi-folder fixture' })
     await expect(projectRow).toBeVisible()
     await expect(page.locator('.sidebar__primary .lucide-notebook-pen')).toHaveCount(1)
     await expect(page.locator('.project-row__new-session .lucide-notebook-pen')).toHaveCount(1)
@@ -1542,7 +1582,7 @@ test.describe('Prime Work desktop smoke', () => {
     const dialog = page.getByRole('dialog', { name: 'Remove project' })
     await expect(dialog).toContainText('The folder and saved sessions will not be deleted.')
     await dialog.getByRole('button', { name: 'Remove', exact: true }).click()
-    await expect(page.locator('.project-row')).toHaveCount(0)
+    await expect(page.locator('.project-row').filter({ hasText: 'Multi-folder fixture' })).toHaveCount(0)
     expect(existsSync(join(fixtureRoot, 'project'))).toBe(true)
   })
 
@@ -1607,11 +1647,11 @@ test.describe('Prime Work desktop smoke', () => {
         await expect(page.getByRole('button', { name: 'Enable Ask user' })).toHaveAttribute('aria-pressed', 'false')
         await page.getByRole('button', { name: 'Enable Ask user' }).click()
         await expect(page.getByRole('button', { name: 'Disable Ask user' })).toHaveAttribute('aria-pressed', 'true')
-        const browserToggle = page.getByRole('button', { name: 'Disable Browser' })
+        const browserToggle = page.getByRole('button', { name: 'Disable Browser | Ego Lite' })
         await browserToggle.click()
-        const browserConfirmation = page.getByRole('dialog', { name: 'Disable Browser?' })
+        const browserConfirmation = page.getByRole('dialog', { name: 'Disable Browser | Ego Lite?' })
         await browserConfirmation.getByRole('button', { name: 'Cancel' }).click()
-        await expect(page.getByRole('button', { name: 'Disable Browser' })).toHaveAttribute('aria-pressed', 'true')
+        await expect(page.getByRole('button', { name: 'Disable Browser | Ego Lite' })).toHaveAttribute('aria-pressed', 'true')
         const computerUseToggle = page.getByRole('button', { name: 'Enable Computer Use | TryCUA' })
         await expect(computerUseToggle).toHaveAttribute('aria-pressed', 'false')
         await computerUseToggle.click()
@@ -1735,7 +1775,7 @@ test.describe('Prime Work desktop smoke', () => {
       select.remove()
       return result
     })
-    await page.getByRole('button', { name: /Light/ }).click()
+    await page.getByRole('radio', { name: 'Light', exact: true }).click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
     expect(await nativeSelectTheme()).toMatchObject({
       scheme: 'light',
@@ -1744,7 +1784,7 @@ test.describe('Prime Work desktop smoke', () => {
       themeColor: '#20201e',
       themeBackground: '#ffffff',
     })
-    await page.getByRole('button', { name: /Dark/ }).click()
+    await page.getByRole('radio', { name: 'Dark', exact: true }).click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     expect(await nativeSelectTheme()).toMatchObject({
       scheme: 'dark',
@@ -1753,7 +1793,7 @@ test.describe('Prime Work desktop smoke', () => {
       themeColor: '#f1f1ee',
       themeBackground: '#222220',
     })
-    await page.getByRole('button', { name: /System/ }).click()
+    await page.getByRole('radio', { name: 'System', exact: true }).click()
   })
 
   test('increases interface text within the bounded appearance choices', async () => {
@@ -1892,7 +1932,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     const completedRow = page.locator('.session-row-wrap').filter({ hasText: 'Post-completion catalog refresh' })
     await expect(completedRow).toHaveCount(1)
-    await expect(completedRow).toHaveClass(/session-row-wrap--complete/)
+    await expect(completedRow.locator('.session-status-mark--complete')).toBeVisible()
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
     await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
@@ -1904,7 +1944,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName(/Model: Claude Fixture · Effort: /)
 
     const composer = page.getByRole('combobox', { name: 'Message OMP' })
     await composer.fill('Ask me two OMP questions')
@@ -1938,7 +1978,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()
-    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName(/Model: Claude Fixture · Effort: /)
 
     const composer = page.getByRole('combobox', { name: 'Message Pi' })
     await composer.fill('Ask me two Pi questions')

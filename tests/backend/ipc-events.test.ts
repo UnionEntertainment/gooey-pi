@@ -47,7 +47,6 @@ describe('app:reveal-path authorization', () => {
       settings: serviceStub(),
       heartbeats: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
-      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
       omp: harnessStub(),
       pi: harnessStub(),
     }
@@ -136,7 +135,6 @@ describe('session change IPC', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: serviceStub(),
-      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
       omp: harnessStub(),
       pi: harnessStub(),
     }
@@ -207,7 +205,6 @@ describe('shell-facing app handlers', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: serviceStub(),
-      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
       omp: harnessStub(),
       pi: harnessStub(),
       ...overrides,
@@ -324,7 +321,6 @@ describe('IPC registration lifecycle', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
-      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
       omp: harnessStub(),
       pi: harnessStub(),
     }

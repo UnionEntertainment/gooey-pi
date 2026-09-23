@@ -46,7 +46,7 @@ describe('archived activity cleanup', () => {
   it('never renders archived chats in Activity', async () => {
     const onOpen = vi.fn()
     await act(async () => {
-      root.render(<ActivityPage sessions={[activeSession, archivedSession]} projects={[project]} clearedActivity={{}} onOpen={onOpen} onClear={vi.fn()} />)
+      root.render(<ActivityPage sessions={[activeSession, archivedSession]} projects={[project]} clearedActivity={{}} reviewedActivity={{}} onToggleReviewed={vi.fn()} onOpen={onOpen} onClear={vi.fn()} />)
     })
 
     expect(container.textContent).toContain('Active chat')
@@ -76,7 +76,7 @@ describe('archived activity cleanup', () => {
     }
     const onClear = vi.fn()
     await act(async () => {
-      root.render(<ActivityPage sessions={[activeSession, failedSession, runningSession]} projects={[project]} clearedActivity={{}} onOpen={vi.fn()} onClear={onClear} />)
+      root.render(<ActivityPage sessions={[activeSession, failedSession, runningSession]} projects={[project]} clearedActivity={{}} reviewedActivity={{}} onToggleReviewed={vi.fn()} onOpen={vi.fn()} onClear={onClear} />)
     })
 
     expect(container.querySelector('[aria-label="Clear Active chat activity"]')).not.toBeNull()
@@ -100,12 +100,12 @@ describe('archived activity cleanup', () => {
   it('hides a cleared activity until its session revision changes', async () => {
     const signature = activityNotificationSignature(activeSession)!
     await act(async () => {
-      root.render(<ActivityPage sessions={[activeSession]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} onOpen={vi.fn()} onClear={vi.fn()} />)
+      root.render(<ActivityPage sessions={[activeSession]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} reviewedActivity={{}} onToggleReviewed={vi.fn()} onOpen={vi.fn()} onClear={vi.fn()} />)
     })
     expect(container.textContent).not.toContain('Active chat')
 
     await act(async () => {
-      root.render(<ActivityPage sessions={[{ ...activeSession, eventRevision: 1 }]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} onOpen={vi.fn()} onClear={vi.fn()} />)
+      root.render(<ActivityPage sessions={[{ ...activeSession, eventRevision: 1 }]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} reviewedActivity={{}} onToggleReviewed={vi.fn()} onOpen={vi.fn()} onClear={vi.fn()} />)
     })
     expect(container.textContent).toContain('Active chat')
   })
@@ -165,5 +165,28 @@ describe('archived activity cleanup', () => {
 
     expect(resetBrowserView).toHaveBeenCalledOnce()
     expect(activateWorkspace).toHaveBeenCalledWith(project)
+  })
+})
+
+describe('activity project filter', () => {
+  it('narrows the list to sessions whose project name matches the query', async () => {
+    const otherProject: ProjectRecord = {
+      ...project, id: 'other', name: 'Sidecar', path: '/sidecar', folders: ['/sidecar'], primaryFolder: '/sidecar',
+    }
+    const sidecarSession: SessionRecord = {
+      ...activeSession, id: 'sidecar', filePath: '/sessions/sidecar.jsonl', projectPath: '/sidecar', title: 'Sidecar chat', unread: false,
+    }
+    await act(async () => {
+      root.render(<ActivityPage sessions={[activeSession, sidecarSession]} projects={[project, otherProject]} clearedActivity={{}} reviewedActivity={{}} onToggleReviewed={vi.fn()} onOpen={vi.fn()} onClear={vi.fn()} />)
+    })
+
+    const input = container.querySelector<HTMLInputElement>('.page-search input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'sidecar')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('Sidecar chat')
+    expect(container.textContent).not.toContain('Active chat')
   })
 })

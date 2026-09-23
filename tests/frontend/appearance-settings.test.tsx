@@ -27,7 +27,7 @@ describe('AppearanceSettings', () => {
     const update = vi.fn()
     act(() => root.render(<AppearanceSettings settings={DEFAULT_SETTINGS} onUpdate={update} />))
 
-    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Interface text size"] [role="radio"]')]
     expect(options.map((option) => option.textContent)).toEqual(['Smaller', 'Default', 'Larger'])
     expect(options.map((option) => option.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false'])
 
@@ -44,7 +44,7 @@ describe('AppearanceSettings', () => {
     ))
 
     expect(container.querySelector('h1')?.textContent).toBe('外观')
-    expect(container.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe('界面文本大小')
+    expect(container.querySelector('[role="radiogroup"][aria-label="界面文本大小"]')).not.toBeNull()
     expect(container.textContent).toContain('支持 2 种语言')
     const locale = container.querySelector<HTMLSelectElement>('select')!
     expect([...locale.options].map((option) => option.textContent)).toEqual(['跟随系统', '英语', '简体中文'])
@@ -59,8 +59,8 @@ describe('AppearanceSettings', () => {
     const update = vi.fn()
     act(() => root.render(<AppearanceSettings settings={DEFAULT_SETTINGS} onUpdate={update} />))
 
-    const group = container.querySelector<HTMLDivElement>('[role="radiogroup"]')!
-    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+    const group = container.querySelector<HTMLDivElement>('[role="radiogroup"][aria-label="Interface text size"]')!
+    const options = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
     expect(options.map((option) => option.tabIndex)).toEqual([-1, 0, -1])
 
     const press = (key: string) => {

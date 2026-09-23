@@ -1,4 +1,4 @@
-import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
 import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import { resolveExecutable, type ExecutableSource } from '../process-utils'
@@ -228,6 +228,15 @@ export class AgentRpcManager {
     const translated = this.adapter.translateCommand(command)
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())
+    }
+    if (command.type === 'set_thinking_level' && this.providers) {
+      // Mirror the start() check: a level the runtime's current model does not
+      // support must be rejected here, not forwarded to the harness.
+      const snapshot = runtime.snapshot()
+      const currentModel = await this.providers.capabilities(snapshot.model?.provider, snapshot.model?.id)
+      if (currentModel && !currentModel.availableThinkingLevels.includes(command.level as PrimeThinkingLevel)) {
+        throw new TypeError(`${currentModel.name} does not support ${command.level} reasoning`)
+      }
     }
     if (command.type === 'set_service_tier') {
       const serviceTier = command.serviceTier === 'priority' ? 'priority' : 'default'

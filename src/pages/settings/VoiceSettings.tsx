@@ -1,5 +1,5 @@
 import { Check, KeyRound, Laptop, LoaderCircle, Mic2, Radio, RefreshCw, Server, ShieldAlert, ShieldCheck, Trash2, Waves } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
@@ -76,6 +76,7 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
   const [selfHostedModel, setSelfHostedModel] = useState(settings.voiceSelfHostedModel)
   const [selfHostedTestState, setSelfHostedTestState] = useState<SelfHostedTestState>('idle')
   const [selfHostedMessage, setSelfHostedMessage] = useState('')
+  const selfHostedTestRevision = useRef(0)
 
   useEffect(() => setSelfHostedUrl(settings.voiceSelfHostedUrl), [settings.voiceSelfHostedUrl])
   useEffect(() => setSelfHostedModel(settings.voiceSelfHostedModel), [settings.voiceSelfHostedModel])
@@ -96,7 +97,7 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
   }, [voice])
 
   const saveCredential = async () => {
-    if (!voice || !credential || !apiKey.trim()) return
+    if (busy || !voice || !credential || !apiKey.trim()) return
     setBusy(true); setFailure('')
     try {
       setStatus(await voice.saveApiKey(credential, apiKey))
@@ -110,20 +111,24 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
     try { setStatus(await voice.deleteApiKey(provider)) } catch (error) { setFailure(errorMessage(error)) } finally { setBusy(false) }
   }
 
-  const closeCredential = () => { if (!busy) { setCredential(null); setApiKey(''); setFailure('') } }
+  const closeCredential = () => { setCredential(null); setApiKey(''); setFailure('') }
   const openCredential = (provider: VoiceCredentialProvider) => { setFailure(''); setCredential(provider) }
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => { void onUpdate({ [key]: value } as Pick<AppSettings, K>) }
   const testSelfHosted = async () => {
     if (!voice || !selfHostedUrl.trim()) return
     setSelfHostedTestState('testing'); setSelfHostedMessage('')
+    const revision = ++selfHostedTestRevision.current
     const url = selfHostedUrl.trim()
     const model = selfHostedModel.trim()
     try {
       await voice.testSelfHosted({ url, model })
       await onUpdate({ voiceSelfHostedUrl: url, voiceSelfHostedModel: model })
+      // A newer edit or test supersedes this result; never announce a stale URL.
+      if (selfHostedTestRevision.current !== revision) return
       setSelfHostedTestState('connected')
       setSelfHostedMessage('Connected. GooeyPi successfully transcribed a test audio clip.')
     } catch (error) {
+      if (selfHostedTestRevision.current !== revision) return
       setSelfHostedTestState('error')
       setSelfHostedMessage(errorMessage(error))
     }
@@ -203,11 +208,11 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
               <span className="voice-local-setup__intro"><Server size={15} /><span><strong>Connect your transcription server</strong><small>Works with Parakeet, Whisper, and other servers that implement the OpenAI transcription API.</small></span></span>
               <label className="voice-path-field">
                 <span><strong>Server URL</strong><small>Enter the server base URL or its full /v1/audio/transcriptions endpoint.</small></span>
-                <input aria-label="Self-hosted server URL" type="url" value={selfHostedUrl} placeholder="http://127.0.0.1:9000" spellCheck={false} onChange={(event) => { setSelfHostedUrl(event.target.value); setSelfHostedTestState('idle'); setSelfHostedMessage('') }} onBlur={() => { const value = selfHostedUrl.trim(); if (value !== settings.voiceSelfHostedUrl) update('voiceSelfHostedUrl', value) }} />
+                <input aria-label="Self-hosted server URL" type="url" value={selfHostedUrl} placeholder="http://127.0.0.1:9000" spellCheck={false} onChange={(event) => { selfHostedTestRevision.current += 1; setSelfHostedUrl(event.target.value); setSelfHostedTestState('idle'); setSelfHostedMessage('') }} onBlur={() => { const value = selfHostedUrl.trim(); if (value !== settings.voiceSelfHostedUrl) update('voiceSelfHostedUrl', value) }} />
               </label>
               <label className="voice-path-field">
                 <span><strong>Model ID</strong><small>Optional. Leave blank to ask the server for its default English model.</small></span>
-                <input aria-label="Self-hosted model ID" value={selfHostedModel} placeholder="nvidia/parakeet-tdt-0.6b-v3" spellCheck={false} onChange={(event) => { setSelfHostedModel(event.target.value); setSelfHostedTestState('idle'); setSelfHostedMessage('') }} onBlur={() => { const value = selfHostedModel.trim(); if (value !== settings.voiceSelfHostedModel) update('voiceSelfHostedModel', value) }} />
+                <input aria-label="Self-hosted model ID" value={selfHostedModel} placeholder="nvidia/parakeet-tdt-0.6b-v3" spellCheck={false} onChange={(event) => { selfHostedTestRevision.current += 1; setSelfHostedModel(event.target.value); setSelfHostedTestState('idle'); setSelfHostedMessage('') }} onBlur={() => { const value = selfHostedModel.trim(); if (value !== settings.voiceSelfHostedModel) update('voiceSelfHostedModel', value) }} />
               </label>
               <div className="voice-self-hosted-auth">
                 <span><strong>Access token</strong><small>Optional. Stored with the same OS-backed protection as your other voice keys.</small></span>
@@ -262,10 +267,12 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
         </div>
       </section>
 
-      {credential ? <Modal title={`Connect ${CREDENTIALS.find((item) => item.id === credential)?.name ?? credential}`} onClose={closeCredential} footer={<><button type="button" className="button" disabled={busy} onClick={closeCredential}>Cancel</button><button type="button" className="button button--primary" disabled={busy || !apiKey.trim()} onClick={() => void saveCredential()}>{busy ? 'Saving…' : credential === 'self-hosted' ? 'Save token' : 'Save API key'}</button></>}>
-        <p className="modal-intro">{secureStorageAvailable ? `Paste the ${credential === 'self-hosted' ? 'optional bearer token' : 'provider API key'}. GooeyPi encrypts it with your operating system’s secure credential store and never reads it back into this screen.` : `Secure credential storage is unavailable. GooeyPi will keep this ${credential === 'self-hosted' ? 'token' : 'key'} only in desktop memory for the current app session. It will not write the ${credential === 'self-hosted' ? 'token' : 'key'} to disk, and it will be cleared when GooeyPi quits.`}</p>
-        {failure ? <p className="settings-error" role="alert">{failure}</p> : null}
-        <label className="field"><span>{credential === 'self-hosted' ? 'Access token' : 'API key'}</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} placeholder={credential === 'self-hosted' ? 'Paste access token' : 'Paste API key'} onChange={(event) => setApiKey(event.target.value)} /></label>
+      {credential ? <Modal title={`Connect ${CREDENTIALS.find((item) => item.id === credential)?.name ?? credential}`} onClose={closeCredential} canClose={() => !busy} footer={<><button type="button" className="button" disabled={busy} onClick={closeCredential}>Cancel</button><button type="submit" form="voice-credential-form" className="button button--primary" disabled={busy || !apiKey.trim()}>{busy ? 'Saving…' : credential === 'self-hosted' ? 'Save token' : 'Save API key'}</button></>}>
+        <form id="voice-credential-form" onSubmit={(event) => { event.preventDefault(); void saveCredential() }}>
+          <p className="modal-intro">{secureStorageAvailable ? `Paste the ${credential === 'self-hosted' ? 'optional bearer token' : 'provider API key'}. GooeyPi encrypts it with your operating system’s secure credential store and never reads it back into this screen.` : `Secure credential storage is unavailable. GooeyPi will keep this ${credential === 'self-hosted' ? 'token' : 'key'} only in desktop memory for the current app session. It will not write the ${credential === 'self-hosted' ? 'token' : 'key'} to disk, and it will be cleared when GooeyPi quits.`}</p>
+          {failure ? <p className="settings-error" role="alert">{failure}</p> : null}
+          <label className="field"><span>{credential === 'self-hosted' ? 'Access token' : 'API key'}</span><input data-autofocus type="password" value={apiKey} autoComplete="off" spellCheck={false} placeholder={credential === 'self-hosted' ? 'Paste access token' : 'Paste API key'} onChange={(event) => setApiKey(event.target.value)} /></label>
+        </form>
       </Modal> : null}
     </>
   )

@@ -271,6 +271,10 @@ export class SessionService {
       state.archivedSessions = state.archivedSessions.filter((path) => resolve(path) !== resolve(safePath))
       if (archived) state.archivedSessions.push(safePath)
     })
+    // Stopping the runtime writes to the session file, which can trigger a
+    // watcher-driven re-list that reads the store before this update commits.
+    // Emit after the commit so renderers reconcile against the final state.
+    this.emitChange({ filePath: safePath, harness: this.harness })
     return true
   }
 
@@ -281,6 +285,7 @@ export class SessionService {
       state.pinnedSessions = state.pinnedSessions.filter((path) => resolve(path) !== resolve(safePath))
       if (pinned) state.pinnedSessions.push(safePath)
     })
+    this.emitChange({ filePath: safePath, harness: this.harness })
     return true
   }
 

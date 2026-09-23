@@ -81,6 +81,19 @@ export function activityNotificationSignature(session: SessionRecord): string | 
   return `${session.status}:${session.eventRevision ?? session.updatedAt}`
 }
 
+export const ACTIVITY_REVIEWED_KEY = 'prime-work.activity-reviewed'
+
+export function activitySessionRevision(session: SessionRecord): string {
+  return String(session.eventRevision ?? session.updatedAt)
+}
+
+export function readReviewedActivity(storedValue?: string | null): Record<string, string> {
+  const raw = storedValue !== undefined
+    ? storedValue
+    : typeof window === 'undefined' ? null : window.localStorage.getItem(ACTIVITY_REVIEWED_KEY)
+  return parseClearedSignatures(raw)
+}
+
 const systemNotificationBody: Record<string, string> = {
   waiting: 'Waiting for input',
   failed: 'Failed',

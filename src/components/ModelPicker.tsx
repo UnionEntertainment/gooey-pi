@@ -93,8 +93,11 @@ export const ModelPicker = memo(function ModelPicker({ value, effort, reasoningL
 
   useEffect(() => {
     if (!open) return
-    if (!navigableModels.some((model) => model.key === activeKey)) setActiveKey(navigableModels[0]?.key ?? null)
-  }, [activeKey, navigableModels, open])
+    // Functional update so the open-reset's queued activeKey is validated
+    // instead of stomped: when the reset picked a still-navigable model it
+    // survives, and only a stale key falls back to the first option.
+    setActiveKey((current) => (navigableModels.some((model) => model.key === current) ? current : navigableModels[0]?.key ?? null))
+  }, [navigableModels, open])
 
   useEffect(() => {
     if (!open || !activeKey) return
@@ -183,6 +186,7 @@ export const ModelPicker = memo(function ModelPicker({ value, effort, reasoningL
                   max={reasoningLevels.length - 1}
                   step={1}
                   value={effortIndex}
+                  aria-valuetext={reasoningLabels[reasoningLevels[effortIndex] ?? effort]}
                   style={{ '--fill': `${effortFill}%` } as CSSProperties}
                   onChange={(event) => onEffortChange(reasoningLevels[event.currentTarget.valueAsNumber] ?? effort)}
                 />

@@ -41,6 +41,7 @@ import { formatRelative } from '@/lib/data'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { errorMessage } from '@/lib/errors'
 import { EmptyState, Modal, Segmented } from '@/components/ui'
+import { useVirtualRows } from '@/hooks/useVirtualRows'
 
 type ScheduleFilter = 'active' | 'paused' | 'attention' | 'all'
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'advanced'
@@ -172,15 +173,29 @@ function rruleParts(rrule: string) {
   }))
 }
 
+const SIMPLE_FREQUENCIES: Record<string, true> = { hourly: true, daily: true, weekly: true, monthly: true }
+
+/** Returns the simple-editor frequency only when the RRULE round-trips through
+ *  the simple controls unchanged; anything else (COUNT, UNTIL, BYMONTHDAY,
+ *  non-weekly BYDAY, unknown parts) stays in Advanced mode so saving cannot
+ *  silently drop constraints. */
+function simpleFrequency(parts: Map<string, string>): Frequency {
+  const freq = parts.get('FREQ')?.toLowerCase()
+  if (!freq || !SIMPLE_FREQUENCIES[freq]) return 'advanced'
+  const interval = parts.get('INTERVAL')
+  if (interval !== undefined && !/^\d+$/.test(interval)) return 'advanced'
+  const byday = parts.get('BYDAY')
+  if (byday !== undefined && (freq !== 'weekly' || byday.split(',').some((day) => !(DAY_CODES as readonly string[]).includes(day)))) return 'advanced'
+  for (const key of parts.keys()) if (key !== 'FREQ' && key !== 'INTERVAL' && key !== 'BYDAY') return 'advanced'
+  return freq as Frequency
+}
+
 function formFromSchedule(item: AutomationScheduleRecord, models: PrimeModelDescriptor[], lastSelectedModel: string): ScheduleForm {
   const start = item.timing.kind === 'once'
     ? localParts(new Date(item.timing.at))
     : { date: item.timing.dtstartLocal.slice(0, 10), time: item.timing.dtstartLocal.slice(11, 16) }
   const parts = item.timing.kind === 'rrule' ? rruleParts(item.timing.rrule) : new Map<string, string>()
-  const rawFrequency = parts.get('FREQ')?.toLowerCase()
-  const frequency = rawFrequency === 'hourly' || rawFrequency === 'daily' || rawFrequency === 'weekly' || rawFrequency === 'monthly'
-    ? rawFrequency
-    : 'advanced'
+  const frequency = simpleFrequency(parts)
   return {
     title: item.title,
     prompt: item.prompt,
@@ -324,8 +339,16 @@ export function ScheduledPage({
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects])
   const sessionMap = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions])
   const selected = schedules.find((item) => item.id === selectedId) ?? null
+  const consumedFocusId = useRef<string | null>(null)
   useEffect(() => {
-    if (selectedScheduleId && schedules.some((item) => item.id === selectedScheduleId)) setSelectedId(selectedScheduleId)
+    // External navigation requests are consumed once: a catalog refresh must not
+    // yank the user back into a detail view they already left.
+    if (!selectedScheduleId) { consumedFocusId.current = null; return }
+    if (consumedFocusId.current === selectedScheduleId) return
+    if (schedules.some((item) => item.id === selectedScheduleId)) {
+      consumedFocusId.current = selectedScheduleId
+      setSelectedId(selectedScheduleId)
+    }
   }, [schedules, selectedScheduleId])
   const editingSchedule = editor?.mode === 'edit' ? schedules.find((item) => item.id === editor.scheduleId) : undefined
   const selectedProject = projectMap.get(form.projectId)
@@ -347,6 +370,9 @@ export function ScheduledPage({
     if (needsAttention(item)) result.attention += 1
     return result
   }, { active: 0, paused: 0, attention: 0 })
+  const ledgerRows = useVirtualRows(visible.length, 113)
+  const heartbeatRows = useVirtualRows(nativeHeartbeats.length, 91)
+  const [confirmHeartbeatStop, setConfirmHeartbeatStop] = useState<NativeHeartbeatRecord | null>(null)
 
   useEffect(() => {
     if (!editor || !currentTiming) {
@@ -378,11 +404,8 @@ export function ScheduledPage({
     const next = formFromSchedule(item, models, lastSelectedModel)
     setForm(next); setBaseline(JSON.stringify(next)); setFormError(''); setPreview(null); setEditor({ mode: 'edit', scheduleId: item.id })
   }
-  const closeEditor = () => {
-    if (saving) return
-    if (JSON.stringify(form) !== baseline && !window.confirm('Discard your unsaved schedule changes?')) return
-    setEditor(null); setFormError('')
-  }
+  const canCloseEditor = () => !saving && (JSON.stringify(form) === baseline || window.confirm('Discard your unsaved schedule changes?'))
+  const closeEditor = () => { setEditor(null); setFormError('') }
   const setProject = (projectId: string) => {
     const project = projectMap.get(projectId)
     const firstSession = project ? sessions.find((session) => session.projectPath === project.path && !session.archived) : undefined
@@ -440,10 +463,10 @@ export function ScheduledPage({
   }
 
   const editorModal = editor ? (
-    <Modal title={editor.mode === 'create' ? 'Create schedule' : 'Edit schedule'} onClose={closeEditor} footer={(
+    <Modal title={editor.mode === 'create' ? 'Create schedule' : 'Edit schedule'} onClose={closeEditor} canClose={canCloseEditor} footer={(
       <>
         <span className="schedule-editor__save-status" aria-live="polite">{saving ? 'Saving without closing your draft…' : ''}</span>
-        <button type="button" className="button" disabled={saving} onClick={closeEditor}>Cancel</button>
+        <button type="button" className="button" disabled={saving} onClick={() => { if (canCloseEditor()) closeEditor() }}>Cancel</button>
         <button type="submit" form="schedule-editor-form" className="button button--primary" disabled={saving}>
           {saving ? 'Saving…' : editor.mode === 'create' ? 'Create schedule' : 'Save changes'}
         </button>
@@ -455,7 +478,7 @@ export function ScheduledPage({
           <p>{HARNESS_SHORT_NAMES[harness]} runs this prompt unattended. You can always pause it or open the session produced by a run.</p>
         </div>
         <div className="schedule-editor__copy">
-          <label className="field"><span>Title</span><input autoFocus required value={form.title} disabled={saving} placeholder="Morning issue triage" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} /></label>
+          <label className="field"><span>Title</span><input data-autofocus required value={form.title} disabled={saving} placeholder="Morning issue triage" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} /></label>
           <label className="field"><span>Prompt</span><textarea required rows={4} value={form.prompt} disabled={saving} placeholder="Review new high-priority issues, identify blockers, and propose owners…" onChange={(event) => setForm((current) => ({ ...current, prompt: event.target.value }))} /></label>
         </div>
         <div className="schedule-editor__grid">
@@ -482,7 +505,7 @@ export function ScheduledPage({
                 <label className="field"><span>Every</span><input type="number" min="1" max="999" value={form.interval} onChange={(event) => setForm((current) => ({ ...current, interval: event.target.value }))} /></label>
                 <span>{form.frequency === 'hourly' ? 'hour(s)' : form.frequency === 'daily' ? 'day(s)' : form.frequency === 'weekly' ? 'week(s)' : 'month(s)'}</span>
               </div> : <label className="field"><span>RRULE</span><textarea className="schedule-rrule" rows={3} spellCheck={false} value={form.advancedRrule} placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR" onChange={(event) => setForm((current) => ({ ...current, advancedRrule: event.target.value }))} /></label>}
-              {form.frequency === 'weekly' ? <fieldset className="weekday-fieldset"><legend>On days</legend><div className="weekday-chips">{WEEKDAYS.map((day) => { const active = form.weekdays.includes(day.value); return <label key={day.value} className={active ? 'is-active' : ''} title={day.long}><input type="checkbox" checked={active} onChange={() => setForm((current) => ({ ...current, weekdays: active ? current.weekdays.filter((value) => value !== day.value) : [...current.weekdays, day.value] }))} /><span>{day.label}</span></label> })}</div></fieldset> : null}
+              {form.frequency === 'weekly' ? <fieldset className="weekday-fieldset"><legend>On days</legend><div className="weekday-chips">{WEEKDAYS.map((day) => { const active = form.weekdays.includes(day.value); return <label key={day.value} className={active ? 'is-active' : ''} title={day.long}><input type="checkbox" aria-label={day.long} checked={active} onChange={() => setForm((current) => ({ ...current, weekdays: active ? current.weekdays.filter((value) => value !== day.value) : [...current.weekdays, day.value] }))} /><span>{day.label}</span></label> })}</div></fieldset> : null}
             </> : null}
             <div className="schedule-date-fields">
               <label className="field"><span>{form.timingKind === 'once' ? 'Date' : 'Starts'}</span><input type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} /></label>
@@ -568,7 +591,9 @@ export function ScheduledPage({
       <div className="page-tools schedule-tools"><Segmented value={filter} label="Schedule filter" onChange={(value) => setFilter(value as ScheduleFilter)} options={[{ value: 'active', label: 'Active' }, { value: 'paused', label: 'Paused' }, { value: 'attention', label: 'Needs attention' }, { value: 'all', label: 'All' }]} /><span>{visible.length} {visible.length === 1 ? 'schedule' : 'schedules'}</span></div>
       {error ? <p className="page-inline-error" role="alert">Schedule catalog unavailable: {error}</p> : null}
       {actionError ? <p className="page-inline-error" role="alert">{actionError}</p> : null}
-      {visible.length ? <div className="schedule-ledger">{visible.map((item) => {
+      {visible.length ? <div className="schedule-ledger" ref={ledgerRows.listRef}>
+        {ledgerRows.paddingTop ? <div style={{ height: ledgerRows.paddingTop }} aria-hidden="true" /> : null}
+        {visible.slice(ledgerRows.start, ledgerRows.end).map((item) => {
         const project = projectMap.get(item.target.projectId)
         const targetSession = item.target.kind === 'session' ? sessionMap.get(item.target.sessionId) : undefined
         return <button type="button" key={item.id} className="schedule-row" onClick={() => { setSelectedId(item.id); setActionError(''); setActionNotice('') }} aria-label={`Open ${item.title}`}>
@@ -577,15 +602,22 @@ export function ScheduledPage({
           <span className="schedule-row__next"><small>Next</small><strong>{item.nextRunAt ? formatDateTime(item.nextRunAt) : '—'}</strong><span>{item.nextRunAt ? formatRelative(item.nextRunAt) : 'No future run'}</span></span>
           <ChevronRight className="schedule-row__chevron" size={16} />
         </button>
-      })}</div> : <EmptyState icon={<CalendarClock size={24} />} title={filter === 'all' ? 'No scheduled work' : `No ${filter === 'attention' ? 'schedules need attention' : `${filter} schedules`}`} action={schedules.length ? undefined : <button type="button" className="button button--primary" onClick={openCreate}><Plus size={13} /> Create schedule</button>}> {schedules.length ? 'Choose another filter to see the rest of your automation ledger.' : `Create a schedule and ${HARNESS_SHORT_NAMES[harness]} will bring every result back here.`}</EmptyState>}
+        })}
+        {ledgerRows.paddingBottom ? <div style={{ height: ledgerRows.paddingBottom }} aria-hidden="true" /> : null}
+      </div> : <EmptyState icon={<CalendarClock size={24} />} title={filter === 'all' ? 'No scheduled work' : `No ${filter === 'attention' ? 'schedules need attention' : `${filter} schedules`}`} action={schedules.length ? undefined : <button type="button" className="button button--primary" onClick={openCreate}><Plus size={13} /> Create schedule</button>}> {schedules.length ? 'Choose another filter to see the rest of your automation ledger.' : `Create a schedule and ${HARNESS_SHORT_NAMES[harness]} will bring every result back here.`}</EmptyState>}
       {nativeHeartbeats.length ? <section className="native-heartbeats" aria-labelledby="native-heartbeats-title">
         <div className="native-heartbeats__header"><div><span className="schedule-page__kicker">Prime Agent</span><h2 id="native-heartbeats-title">Agent heartbeats</h2></div><small>Auto-discovered; the owning runtime is authoritative</small></div>
-        <div className="native-heartbeats__list">{nativeHeartbeats.map((heartbeat) => <article key={heartbeat.id} className="native-heartbeat">
+        <div className="native-heartbeats__list" ref={heartbeatRows.listRef}>
+          {heartbeatRows.paddingTop ? <div style={{ height: heartbeatRows.paddingTop }} aria-hidden="true" /> : null}
+          {nativeHeartbeats.slice(heartbeatRows.start, heartbeatRows.end).map((heartbeat) => <article key={heartbeat.id} className="native-heartbeat">
           <span className={`schedule-row__status schedule-row__status--${heartbeat.status}`}><CalendarClock size={15} /></span>
           <div className="native-heartbeat__main"><span><strong>{heartbeat.label || (heartbeat.source === 'heartbeat' ? 'Thread heartbeat' : 'Agent heartbeat')}</strong><i className={`schedule-state schedule-state--${heartbeat.status}`}>{heartbeat.status}</i></span><p>{heartbeat.prompt}</p><small>{heartbeat.schedule}{heartbeat.nextRunAt ? ` · next ${formatRelative(heartbeat.nextRunAt)}` : ''}</small></div>
-          <div className="native-heartbeat__actions">{heartbeat.status === 'active' ? <button type="button" className="button" disabled={Boolean(action)} onClick={() => void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'pause'), 'Heartbeat paused.')}>Pause</button> : <button type="button" className="button" disabled={Boolean(action)} onClick={() => void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'resume'), 'Heartbeat resumed.')}>Resume</button>}<button type="button" className="button" disabled={Boolean(action)} onClick={() => void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'stop'), 'Heartbeat stopped.')}>Stop</button></div>
-        </article>)}</div>
+          <div className="native-heartbeat__actions">{heartbeat.status === 'active' ? <button type="button" className="button" disabled={Boolean(action)} onClick={() => void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'pause'), 'Heartbeat paused.')}>Pause</button> : <button type="button" className="button" disabled={Boolean(action)} onClick={() => void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'resume'), 'Heartbeat resumed.')}>Resume</button>}<button type="button" className="button native-heartbeat__stop" disabled={Boolean(action)} onClick={() => setConfirmHeartbeatStop(heartbeat)}>Stop</button></div>
+        </article>)}
+          {heartbeatRows.paddingBottom ? <div style={{ height: heartbeatRows.paddingBottom }} aria-hidden="true" /> : null}
+        </div>
       </section> : null}
+      {confirmHeartbeatStop ? <Modal title={`Stop ${confirmHeartbeatStop.label || (confirmHeartbeatStop.source === 'heartbeat' ? 'thread heartbeat' : 'agent heartbeat')}?`} onClose={() => setConfirmHeartbeatStop(null)} footer={<><button type="button" className="button" onClick={() => setConfirmHeartbeatStop(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => { const heartbeat = confirmHeartbeatStop; setConfirmHeartbeatStop(null); void perform(`heartbeat:${heartbeat.id}`, () => onManageHeartbeat(heartbeat.id, 'stop'), 'Heartbeat stopped.') }}>Yes, stop heartbeat</button></>}><p className="modal-intro">Are you sure? Stopping permanently deletes this heartbeat job from the owning runtime — it will not run again.</p></Modal> : null}
       {editorModal}
     </div></div>
   )

@@ -31,7 +31,7 @@ function renderImage(part: Extract<MessagePart, { type: 'image' }>, key: string)
   )
 }
 
-function renderNarrative(parts: MessagePart[], keyPrefix: string, streaming = false) {
+export function renderNarrative(parts: MessagePart[], keyPrefix: string, streaming = false) {
   return parts.map((part, index) => {
     if (part.type === 'text') return <MarkdownText key={`${keyPrefix}-${index}`} text={part.text} streaming={streaming} />
     if (part.type === 'image') return renderImage(part, `${keyPrefix}-${index}`)
@@ -39,7 +39,7 @@ function renderNarrative(parts: MessagePart[], keyPrefix: string, streaming = fa
   })
 }
 
-function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, showReasoning: boolean, showTools: boolean, streaming = false) {
+export function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, showReasoning: boolean, showTools: boolean, streaming = false) {
   const groups: Array<{ activity: boolean; parts: MessagePart[] }> = []
   for (const part of parts) {
     const activity = part.type !== 'text' && part.type !== 'image'
@@ -87,6 +87,35 @@ function primaryNarrativeStart(parts: MessagePart[], start: number): number {
     }
   }
   return bestStart
+}
+
+const isActivityPart = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
+
+/**
+ * Splits an assistant turn into the narrative before the work, the work slice
+ * (activity plus any narrative that stays inside the disclosure), and the
+ * trailing narrative that renders at message level. Shared by the completed
+ * and live renderers so streaming text keeps the completed turn's geometry.
+ */
+export function splitAssistantParts(parts: MessagePart[], showReasoning: boolean, showTools: boolean) {
+  const firstActivity = parts.findIndex(isActivityPart)
+  let lastActivity = -1
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (isActivityPart(parts[index])) {
+      lastActivity = index
+      break
+    }
+  }
+  const finalNarrative = firstActivity < 0 ? -1 : primaryNarrativeStart(parts, firstActivity + 1)
+  const workEnd = finalNarrative >= 0 ? finalNarrative : lastActivity + 1
+  const before = firstActivity < 0 ? parts : parts.slice(0, firstActivity)
+  const work = firstActivity < 0 ? [] : parts.slice(firstActivity, workEnd)
+  const after = firstActivity < 0 ? [] : parts.slice(workEnd)
+  const hasVisibleActivity = work.some(
+    (part) => part.type === 'agentMessage' || part.type === 'compaction' || (part.type === 'thinking' && showReasoning) || ((part.type === 'toolCall' || part.type === 'toolResult') && showTools),
+  )
+  const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
+  return { before, work, after, hasVisibleActivity, hiddenMiddleNarrative }
 }
 
 function messageText(message: TranscriptMessage): string {
@@ -140,24 +169,7 @@ function AssistantHarnessMark({ harness, size = 24 }: { harness: HarnessId; size
 
 export const AssistantMessage = memo(
   function AssistantMessage({ message, harness = 'prime', showReasoning, showTools }: { message: TranscriptMessage; harness?: HarnessId; showReasoning: boolean; showTools: boolean }) {
-    const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
-    const firstActivity = message.parts.findIndex(isActivity)
-    let lastActivity = -1
-    for (let index = message.parts.length - 1; index >= 0; index -= 1) {
-      if (isActivity(message.parts[index])) {
-        lastActivity = index
-        break
-      }
-    }
-    const finalNarrative = firstActivity < 0 ? -1 : primaryNarrativeStart(message.parts, firstActivity + 1)
-    const workEnd = finalNarrative >= 0 ? finalNarrative : lastActivity + 1
-    const before = firstActivity < 0 ? message.parts : message.parts.slice(0, firstActivity)
-    const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, workEnd)
-    const after = firstActivity < 0 ? [] : message.parts.slice(workEnd)
-    const hasVisibleActivity = work.some(
-      (part) => part.type === 'agentMessage' || part.type === 'compaction' || (part.type === 'thinking' && showReasoning) || ((part.type === 'toolCall' || part.type === 'toolResult') && showTools),
-    )
-    const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
+    const { before, work, after, hasVisibleActivity, hiddenMiddleNarrative } = splitAssistantParts(message.parts, showReasoning, showTools)
     const copyableNarrative = hasVisibleActivity ? [...before, ...after] : [...before, ...hiddenMiddleNarrative, ...after]
     const copyableText = copyableNarrative.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
     return (

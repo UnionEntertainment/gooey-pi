@@ -190,6 +190,7 @@ export function SupabasePage({ harness, skills, activeProjectPath, piMcpAdapterI
 
   const remove = async (skill: SkillRecord) => {
     setConfirmRemove(null)
+    if (updating) return
     setUpdating(skill.id)
     setAlert('')
     try {
@@ -256,11 +257,11 @@ export function SupabasePage({ harness, skills, activeProjectPath, piMcpAdapterI
                 </div>
                 <div className="capability-actions">
                   {skill.location !== 'bundled' && skill.location !== 'system' && skill.definitionRemovalAvailable !== false
-                    ? <button type="button" className="plugin-remove" aria-label={`Remove ${skill.name}`} disabled={updating === skill.id} onClick={() => setConfirmRemove(skill)}><Trash2 size={13}/></button>
+                    ? <button type="button" className="plugin-remove" aria-label={`Remove ${skill.name}`} disabled={Boolean(updating)} onClick={() => setConfirmRemove(skill)}><Trash2 size={13}/></button>
                     : null}
                   {external
                     ? <span className="plugin-toggle" role="img" aria-label={`Externally managed ${skill.name}`}><ShieldCheck aria-hidden="true" size={14}/></span>
-                    : <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={updating === skill.id} onClick={() => void setEnabled(skill, !skill.enabled)}>{updating === skill.id ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <><Check className="plugin-toggle__check" size={14}/><X className="plugin-toggle__disable" size={14}/></> : <Plus className="plugin-toggle__plus" size={14}/>}</button>}
+                    : <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={Boolean(updating)} onClick={() => void setEnabled(skill, !skill.enabled)}>{updating === skill.id ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <><Check className="plugin-toggle__check" size={14}/><X className="plugin-toggle__disable" size={14}/></> : <Plus className="plugin-toggle__plus" size={14}/>}</button>}
                 </div>
               </article>
             )
@@ -281,41 +282,42 @@ export function SupabasePage({ harness, skills, activeProjectPath, piMcpAdapterI
         {connectOpen ? (
           <Modal
             title={authStep === 'verify' ? 'Authorize Supabase' : authStep === 'project' ? 'Choose a project' : 'Connect a Supabase account'}
-            onClose={() => { if (!connecting) { setConnectOpen(false); resetAuth() } }}
+            onClose={() => { setConnectOpen(false); resetAuth() }}
+            canClose={() => !connecting}
             footer={authStep === 'verify'
-              ? <><button type="button" className="button" disabled={connecting} onClick={resetAuth}><ArrowLeft size={13}/> Back</button><button type="button" className="button button--primary" disabled={!authCode.trim() || connecting} onClick={() => void verify()}>{connecting ? 'Verifying…' : 'Verify and continue'}</button></>
+              ? <><button type="button" className="button" disabled={connecting} onClick={resetAuth}><ArrowLeft size={13}/> Back</button><button type="submit" form="supabase-connect-form" className="button button--primary" disabled={!authCode.trim() || connecting}>{connecting ? 'Verifying…' : 'Verify and continue'}</button></>
               : authStep === 'project'
-                ? <><button type="button" className="button" disabled={connecting} onClick={resetAuth}><ArrowLeft size={13}/> Back</button><button type="button" className="button button--primary" disabled={connecting} onClick={() => void finishConnect()}>{connecting ? 'Connecting…' : 'Connect'}</button></>
-                : <><button type="button" className="button" disabled={connecting} onClick={() => setConnectOpen(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!canSubmit || connecting} onClick={() => void connect()}>{connecting ? 'Connecting…' : usePat ? 'Continue' : 'Continue in browser'}</button></>}
+                ? <><button type="button" className="button" disabled={connecting} onClick={resetAuth}><ArrowLeft size={13}/> Back</button><button type="submit" form="supabase-connect-form" className="button button--primary" disabled={connecting}>{connecting ? 'Connecting…' : 'Connect'}</button></>
+                : <><button type="button" className="button" disabled={connecting} onClick={() => { setConnectOpen(false); resetAuth() }}>Cancel</button><button type="submit" form="supabase-connect-form" className="button button--primary" disabled={!canSubmit || connecting}>{connecting ? 'Connecting…' : usePat ? 'Continue' : 'Continue in browser'}</button></>}
           >
             {authStep === 'verify' ? (
-              <div className="add-tool-form">
+              <form id="supabase-connect-form" className="add-tool-form" onSubmit={(event) => { event.preventDefault(); void verify() }}>
                 <p className="modal-intro">Approve the connection in your browser, then paste the verification code shown on the confirmation page.</p>
                 {authSession ? <small className="field-help">If the browser did not open, use this link: <button type="button" className="supabase-link" onClick={() => onOpenExternal(authSession.url)}>supabase.com/dashboard/cli/login</button></small> : null}
-                <label className="field"><span>Verification code</span><input autoFocus value={authCode} onChange={(event) => setAuthCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void verify() }} placeholder="Paste the code from your browser"/></label>
+                <label className="field"><span>Verification code</span><input data-autofocus value={authCode} onChange={(event) => setAuthCode(event.target.value)} placeholder="Paste the code from your browser"/></label>
                 {authError ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {authError}</p> : null}
-              </div>
+              </form>
             ) : authStep === 'project' ? (
-              <div className="add-tool-form">
+              <form id="supabase-connect-form" className="add-tool-form" onSubmit={(event) => { event.preventDefault(); void finishConnect() }}>
                 <p className="modal-intro">Authorized. Choose which project <code>{name}</code> can manage, or keep access to every project on the account.</p>
                 {projects === null ? (
                   <>
-                    <label className="field"><span>Project ref <small>(optional)</small></span><input autoFocus value={manualRef} onChange={(event) => setManualRef(event.target.value)} placeholder="abcdefghijklmnopqrst"/></label>
+                    <label className="field"><span>Project ref <small>(optional)</small></span><input data-autofocus value={manualRef} onChange={(event) => setManualRef(event.target.value)} placeholder="abcdefghijklmnopqrst"/></label>
                     <small className="field-help">The project list could not be loaded; enter a ref manually or leave empty for all projects.</small>
                   </>
                 ) : (
-                  <label className="field"><span>Project</span><select autoFocus value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
+                  <label className="field"><span>Project</span><select data-autofocus value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
                     <option value="">All projects on this account</option>
                     {projects.map((project) => <option key={project.ref} value={project.ref}>{project.name} ({project.ref})</option>)}
                   </select></label>
                 )}
                 <small className="field-help">Scoping to one project is recommended, especially for production.</small>
                 {authError ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {authError}</p> : null}
-              </div>
+              </form>
             ) : (
-              <div className="add-tool-form">
+              <form id="supabase-connect-form" className="add-tool-form" onSubmit={(event) => { event.preventDefault(); void connect() }}>
                 <p className="modal-intro">GooeyPi opens Supabase in your browser to authorize a token, then saves a local MCP server running <code>{SUPABASE_PACKAGE}</code>. The token never leaves this machine except to Supabase.</p>
-                <label className="field"><span>Connection label</span><input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Acme Corp"/></label>
+                <label className="field"><span>Connection label</span><input data-autofocus value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Acme Corp"/></label>
                 {label.trim() ? <small className="field-help">Saved as MCP server <code>{name || 'supabase-…'}</code>.</small> : null}
                 {usePat ? <label className="field"><span>Personal access token</span><input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="sbp_…" autoComplete="off"/></label> : null}
                 <label className="field field--inline"><input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)}/><span>Read-only database queries</span></label>
@@ -323,7 +325,7 @@ export function SupabasePage({ harness, skills, activeProjectPath, piMcpAdapterI
                 <p className="field-help"><button type="button" className="supabase-link" onClick={() => setUsePat(!usePat)}>{usePat ? 'Use browser sign-in instead' : 'Use a personal access token instead'}</button></p>
                 {authError ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {authError}</p> : null}
                 <p className="connection-warning"><ShieldCheck size={13}/> The authorized token is stored in the harness MCP configuration file on this machine. Only connect accounts you trust.</p>
-              </div>
+              </form>
             )}
             {result ? <pre className="install-output" role="status">{result}</pre> : null}
           </Modal>

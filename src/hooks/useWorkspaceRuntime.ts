@@ -31,11 +31,13 @@ function queuedPromptOwner(
   session: SessionRecord | undefined,
   runtime: RuntimeInfo | undefined,
   generation: number,
+  global?: boolean,
 ): string | undefined {
   if (session?.filePath) return `${session.harness}:session:${session.filePath}`
   if (runtime?.sessionFile) return `${runtime.harness}:session:${runtime.sessionFile}`
   if (runtime) return `${runtime.harness}:runtime:${runtime.runtimeId}`
   if (project) return `${project.harness}:new:${project.id}:${generation}`
+  if (global) return `gooeypi:new:${generation}`
   return undefined
 }
 
@@ -76,6 +78,8 @@ export function useWorkspaceRuntime({
   const activeQueuedPromptOwnerRef = useRef<string | undefined>(queuedPromptOwner(initialProject, initialSession, undefined, 0))
   const [activeProjectId, setActiveProjectId] = useState(initialProject?.id)
   const [activeSessionId, setActiveSessionId] = useState(initialSession?.id)
+  const [globalWorkspace, setGlobalWorkspace] = useState(false)
+  const [activeCwd, setActiveCwd] = useState<string | undefined>(workspaceCwd(initialProject, initialSession))
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0)
   const [loadingSession, setLoadingSession] = useState(false)
@@ -144,8 +148,8 @@ export function useWorkspaceRuntime({
   const attachRuntime = useCallback((nextRuntime: RuntimeInfo | undefined, generation: number) => {
     if (workspaceRef.current.generation !== generation) return
     const next = nextRuntime ?? null
+    const nextQueueOwner = queuedPromptOwner(workspaceRef.current.project, workspaceRef.current.session, nextRuntime, generation, workspaceRef.current.global)
     const previousQueueOwner = activeQueuedPromptOwnerRef.current
-    const nextQueueOwner = queuedPromptOwner(workspaceRef.current.project, workspaceRef.current.session, nextRuntime, generation)
     if (nextQueueOwner !== previousQueueOwner) {
       const currentQueue = pendingQueuedPromptsRef.current
       const restoredQueue = nextQueueOwner ? queuedPromptsByOwnerRef.current.get(nextQueueOwner) : undefined
@@ -164,7 +168,7 @@ export function useWorkspaceRuntime({
     setRuntime(next)
   }, [])
 
-  const activateWorkspace = useCallback((project?: ProjectRecord, session?: SessionRecord, nextRuntime?: RuntimeInfo) => {
+  const activateWorkspace = useCallback((project?: ProjectRecord, session?: SessionRecord, nextRuntime?: RuntimeInfo, globalCwd?: string) => {
     pendingAgentEventsRef.current = []
     promptAdmissionRevisionRef.current = 0
     promptAdmissionGenerationRef.current = null
@@ -180,17 +184,19 @@ export function useWorkspaceRuntime({
       chunkedFlushTimerRef.current = null
     }
     const generation = workspaceRef.current.generation + 1
+    const global = !project && globalCwd !== undefined
     workspaceRef.current = {
       generation,
       project,
       session,
-      cwd: workspaceCwd(project, session),
+      cwd: global ? globalCwd : workspaceCwd(project, session),
       sessionFile: session?.filePath,
+      global,
     }
     transcriptLoadRef.current = bridge && session?.filePath
       ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer(), reconciliation: false, admissionRevision: 0 }
       : null
-    const queueOwner = queuedPromptOwner(project, session, nextRuntime, generation)
+    const queueOwner = queuedPromptOwner(project, session, nextRuntime, generation, global)
     const queuedPrompts = queueOwner ? queuedPromptsByOwnerRef.current.get(queueOwner) ?? [] : []
     activeQueuedPromptOwnerRef.current = queueOwner
     pendingQueuedPromptsRef.current = queuedPrompts
@@ -198,6 +204,8 @@ export function useWorkspaceRuntime({
     setPendingQueuedPrompts(queuedPrompts)
     setActiveProjectId(project?.id)
     setActiveSessionId(session?.id)
+    setGlobalWorkspace(global)
+    setActiveCwd(workspaceRef.current.cwd)
     attachRuntime(nextRuntime, generation)
     if (bridge) {
       setMessages([])
@@ -600,6 +608,8 @@ export function useWorkspaceRuntime({
     acknowledgeSteer,
     activeProjectId,
     activeSessionId,
+    global: globalWorkspace,
+    cwd: activeCwd,
     runtime,
     setRuntime,
     workspaceGeneration,

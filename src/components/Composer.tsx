@@ -31,7 +31,7 @@ import { appendSessionRouting, findSessionMentions } from '@/lib/session-mention
 import { clearComposerDraft, readComposerDraft, saveComposerDraft } from '@/lib/composer-draft'
 import { contextDialLabel } from '@/lib/format-cost'
 import { messageActionForKey } from '@/lib/message-shortcuts'
-import { useComposerAttachments, type ComposerImage } from '@/hooks/useComposerAttachments'
+import { useComposerAttachments, type ComposerImage, type ComposerTextFile } from '@/hooks/useComposerAttachments'
 import { useDictation } from '@/hooks/useDictation'
 import { IconButton, ImageLightbox } from './ui'
 import { ExecutingModelChip, type ExecutingModelChipProps } from './ExecutingModelChip'
@@ -171,12 +171,18 @@ export const Composer = memo(function Composer({
   draftKey,
 }: ComposerProps) {
   const [value, setValue] = useState(() => (draftKey ? readComposerDraft(draftKey)?.text : undefined) ?? '')
+  // Mirrors `value` so async paths (dictation merge, send-failure restore) read
+  // the latest draft instead of a stale closure.
+  const valueRef = useRef(value)
+  valueRef.current = value
   const [menu, setMenu] = useState<'add' | 'mention' | 'command' | null>(null)
   const [sessionReferenceIds, setSessionReferenceIds] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
   const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<ComposerImage | null>(null)
+  const [failedSend, setFailedSend] = useState<{ text: string; images: ComposerImage[]; textFiles: ComposerTextFile[] } | null>(null)
+  const [sendingQueuedId, setSendingQueuedId] = useState<string | null>(null)
   const attachments = useComposerAttachments({ shortName })
   const { images, imagesRef, textFiles, textFilesRef, error: attachmentError, setError: setAttachmentError, processing: processingImages } = attachments
   const dictation = useDictation(voice, transcriptionProvider, setAttachmentError)
@@ -320,21 +326,41 @@ export const Composer = memo(function Composer({
     setMenu(null)
     try {
       await onSend(promptWithContext, submittedImages, intent)
-      if (draftKey) clearComposerDraft(draftKey)
+      // Clear the persisted draft only when it still holds this submission.
+      // Anything typed while the send was in flight is a newer draft and must
+      // survive — the old code deleted the key unconditionally and lost it.
+      if (draftKey) {
+        const persisted = readComposerDraft(draftKey)
+        if (persisted && persisted.text === submittedValue
+          && (persisted.images?.length ?? 0) === submittedComposerImages.length
+          && (persisted.textFiles?.length ?? 0) === submittedTextFiles.length) {
+          clearComposerDraft(draftKey)
+        }
+      }
       // The annotations were delivered: clear the attachment and page markers.
       if (currentAnnotations.length > 0) onClearAnnotations()
     } catch {
       if (mountedRef.current) {
-        setValue((current) => current || submittedValue)
-        const restoration = attachments.restoreWithinLimits(submittedComposerImages)
-        attachments.restoreTextFiles(submittedTextFiles)
-        if (restoration.omitted > 0) {
-          const restoredImages = restoration.restored > 0 ? ` along with ${restoration.restored} submitted image${restoration.restored === 1 ? '' : 's'}` : ''
-          setAttachmentError(`Message was not sent. Your draft was restored${restoredImages}, but ${restoration.omitted} submitted image${restoration.omitted === 1 ? '' : 's'} could not be restored because the attachment limits are full.`)
-        } else if (submittedComposerImages.length > 0 || submittedTextFiles.length > 0) {
-          setAttachmentError('Message was not sent. Your draft and attachments were restored.')
+        // The DOM value is the freshest draft: a keystroke can land between the
+        // rejection and React flushing the controlled value back. Never drop
+        // either text — a newer draft stays put and the failed submission is
+        // held for an explicit restore instead of overwriting it.
+        const latestDraft = textareaRef.current?.value ?? valueRef.current
+        if (!latestDraft) {
+          setValue(submittedValue)
+          const restoration = attachments.restoreWithinLimits(submittedComposerImages)
+          attachments.restoreTextFiles(submittedTextFiles)
+          if (restoration.omitted > 0) {
+            const restoredImages = restoration.restored > 0 ? ` along with ${restoration.restored} submitted image${restoration.restored === 1 ? '' : 's'}` : ''
+            setAttachmentError(`Message was not sent. Your draft was restored${restoredImages}, but ${restoration.omitted} submitted image${restoration.omitted === 1 ? '' : 's'} could not be restored because the attachment limits are full.`)
+          } else if (submittedComposerImages.length > 0 || submittedTextFiles.length > 0) {
+            setAttachmentError('Message was not sent. Your draft and attachments were restored.')
+          } else {
+            setAttachmentError('Message was not sent. Your draft was restored.')
+          }
         } else {
-          setAttachmentError('Message was not sent. Your draft was restored.')
+          setFailedSend({ text: submittedValue, images: submittedComposerImages, textFiles: submittedTextFiles })
+          setAttachmentError('')
         }
       }
     } finally {
@@ -343,14 +369,32 @@ export const Composer = memo(function Composer({
     }
   }
 
+  const restoreFailedSend = () => {
+    if (!failedSend) return
+    const latestDraft = textareaRef.current?.value ?? valueRef.current
+    const merged = latestDraft.trim() && failedSend.text.trim()
+      ? `${failedSend.text.trimEnd()}\n\n${latestDraft}`
+      : failedSend.text || latestDraft
+    setValue(merged)
+    valueRef.current = merged
+    attachments.restoreWithinLimits(failedSend.images)
+    attachments.restoreTextFiles(failedSend.textFiles)
+    setFailedSend(null)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
   const finishDictation = async (send: boolean) => {
     const transcript = await dictation.finish()
     if (!transcript) return
-    const next = value.trimEnd() ? `${value.trimEnd()} ${transcript}` : transcript
+    // Merge with the live draft: typing during transcription must survive.
+    const latest = textareaRef.current?.value ?? valueRef.current
+    const next = latest.trimEnd() ? `${latest.trimEnd()} ${transcript}` : transcript
     setValue(next)
+    valueRef.current = next
     if (send) await submit('queue', next)
     else requestAnimationFrame(() => textareaRef.current?.focus())
   }
+
 
   const insertAtCaret = (textarea: HTMLTextAreaElement, text: string) => {
     const start = textarea.selectionStart ?? textarea.value.length
@@ -433,17 +477,29 @@ export const Composer = memo(function Composer({
   useEffect(() => {
     setActiveSuggestion(0)
   }, [menu, value, suggestions.length])
+  // Keep the keyboard-highlighted option inside the menu's scrollport.
+  useEffect(() => {
+    if (!menu) return
+    const active = menuRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (typeof active?.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+  }, [menu, activeSuggestion])
   const chooseSuggestion = (index: number) => suggestions[index]?.choose()
   const contextPercent = contextUsage?.percent === null || contextUsage?.percent === undefined ? null : Math.min(100, Math.max(0, contextUsage.percent))
   const contextLabel = contextDialLabel(contextUsage, sessionUsage)
   const contextDisplayPercent = contextPercent === null ? null : Math.min(99, Math.round(contextPercent))
   const contextStyle = { '--context-percent': `${contextPercent ?? 0}%` } as CSSProperties
   const sendQueuedMessageImmediately = async (queued: QueuedPrompt) => {
-    onDeleteQueuedMessage?.(queued)
+    if (sendingQueuedId) return
+    setSendingQueuedId(queued.id)
     try {
+      // Remove the item only after the harness accepts it; a rejection leaves
+      // the queued message in place so nothing is lost.
       await onSend(queued.text, [], 'steer')
+      onDeleteQueuedMessage?.(queued)
     } catch {
-      // sendPrompt reports failures itself; there is no composer draft to restore.
+      // sendPrompt reports failures itself; the item stays queued.
+    } finally {
+      setSendingQueuedId(null)
     }
   }
 
@@ -456,16 +512,19 @@ export const Composer = memo(function Composer({
             <strong>{queuedMessages.length + harnessQueuedMessageCount}</strong>
           </div>
           <div className="composer-queue__list">
-            {queuedMessages.map((queued) => (
-              <div className="composer-queue__item" key={queued.id}>
+            {queuedMessages.map((queued) => {
+              const sending = sendingQueuedId === queued.id
+              return (
+              <div className={`composer-queue__item ${sending ? 'is-sending' : ''}`} key={queued.id}>
                 <span className="composer-queue__text">{queued.text}</span>
                 <span className="composer-queue__actions">
-                  <button type="button" className="composer-queue__action" aria-label={`Send queued message immediately: ${queued.text}`} title="Send queued message immediately" onClick={() => { void sendQueuedMessageImmediately(queued) }}><ArrowUp size={13} /></button>
-                  <button type="button" className="composer-queue__action" aria-label={`Edit queued message: ${queued.text}`} title="Edit queued message" onClick={() => { onEditQueuedMessage?.(queued); setValue(queued.text); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Edit3 size={13} /></button>
-                  <button type="button" className="composer-queue__action composer-queue__action--delete" aria-label={`Delete queued message: ${queued.text}`} title="Delete queued message" onClick={() => onDeleteQueuedMessage?.(queued)}><Trash2 size={13} /></button>
+                  <button type="button" className="composer-queue__action" aria-label={`Send queued message immediately: ${queued.text}`} title="Send queued message immediately" disabled={sendingQueuedId !== null} onClick={() => { void sendQueuedMessageImmediately(queued) }}>{sending ? <LoaderCircle className="is-spinning" size={13} /> : <ArrowUp size={13} />}</button>
+                  <button type="button" className="composer-queue__action" aria-label={`Edit queued message: ${queued.text}`} title="Edit queued message" disabled={sending} onClick={() => { onEditQueuedMessage?.(queued); setValue(queued.text); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Edit3 size={13} /></button>
+                  <button type="button" className="composer-queue__action composer-queue__action--delete" aria-label={`Delete queued message: ${queued.text}`} title="Delete queued message" disabled={sending} onClick={() => onDeleteQueuedMessage?.(queued)}><Trash2 size={13} /></button>
                 </span>
               </div>
-            ))}
+              )
+            })}
             {harnessQueuedMessageCount ? (
               <div className="composer-queue__item composer-queue__item--harness">
                 <span className="composer-queue__text">{agentName} is holding {harnessQueuedMessageCount} {harnessQueuedMessageCount === 1 ? 'message' : 'messages'} for the next turn.</span>
@@ -479,6 +538,13 @@ export const Composer = memo(function Composer({
         {...attachments.dragHandlers}
       >
         {attachments.dragging ? <div className="composer-drop-feedback" aria-hidden="true"><Paperclip size={18} />Drop files to attach</div> : null}
+        {failedSend ? (
+          <div className="composer-send-failed" role="alert">
+            <span className="composer-send-failed__text">Message was not sent: {failedSend.text || 'unsent attachments'}</span>
+            <button type="button" onClick={restoreFailedSend}>Restore</button>
+            <button type="button" className="composer-send-failed__dismiss" aria-label="Discard unsent message" onClick={() => setFailedSend(null)}><X size={12} /></button>
+          </div>
+        ) : null}
         <div className="composer-input">
           <textarea
             ref={textareaRef}

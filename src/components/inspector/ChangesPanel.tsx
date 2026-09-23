@@ -33,6 +33,8 @@ export function ChangesPanel({ cwd, git, readOnly = false, onGrantProject, onRef
   const [commitMessage, setCommitMessage] = useState('')
   const [confirmUndo, setConfirmUndo] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const busy = pendingAction !== null
   const visibleFiles = git.files.filter((file) => scope === 'staged' ? file.staged : !file.staged)
   const activeSelectedPath = visibleFiles.some((file) => file.path === selectedPath) ? selectedPath : undefined
 
@@ -57,10 +59,11 @@ export function ChangesPanel({ cwd, git, readOnly = false, onGrantProject, onRef
     setLoading(true)
     window.prime.git.diff(cwd, activeSelectedPath, scope === 'staged').then((value) => { if (!cancelled) setDiff(value.text) }).catch(() => { if (!cancelled) setDiff('Unable to load this diff.') }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [cwd, activeSelectedPath, scope])
+  }, [cwd, activeSelectedPath, scope, git])
 
   const mutate = async (kind: 'stage' | 'unstage' | 'restore', paths: string[]): Promise<boolean> => {
-    if (readOnly || !cwd || !window.prime) return false
+    if (readOnly || !cwd || !window.prime || busy) return false
+    setPendingAction(kind)
     setActionError('')
     try {
       const ok = kind === 'stage'
@@ -74,6 +77,8 @@ export function ChangesPanel({ cwd, git, readOnly = false, onGrantProject, onRef
     } catch (error) {
       setActionError(errorMessage(error))
       return false
+    } finally {
+      setPendingAction(null)
     }
   }
 
@@ -83,13 +88,15 @@ export function ChangesPanel({ cwd, git, readOnly = false, onGrantProject, onRef
   }
 
   const commit = async () => {
-    if (readOnly || !cwd || !commitMessage.trim() || !window.prime) return
+    if (readOnly || !cwd || !commitMessage.trim() || !window.prime || busy) return
+    setPendingAction('commit')
     setActionError('')
     try {
       const result = await window.prime.git.commit(cwd, commitMessage.trim())
       if (!result.ok) throw new Error(result.output || 'Git could not create the commit.')
       setCommitOpen(false); setCommitMessage(''); await onRefreshGit()
     } catch (error) { setActionError(errorMessage(error)) }
+    finally { setPendingAction(null) }
   }
 
   if (!git.isRepo) return <EmptyState icon={<GitBranch size={24} />} title="No Git repository">Open a project backed by Git to review, stage, and commit changes.</EmptyState>
@@ -107,21 +114,21 @@ export function ChangesPanel({ cwd, git, readOnly = false, onGrantProject, onRef
         <IconButton label="Refresh changes" onClick={() => void onRefreshGit()}><RefreshCw size={14} /></IconButton>
       </div>
       {readOnly ? <div className="changes-read-only" role="note"><span>This project is read-only because it was discovered from session history.</span>{onGrantProject ? <button type="button" className="button button--compact" onClick={() => void onGrantProject()}>Add project</button> : null}</div> : null}
-      <div className="changes-scopes"><Segmented value={scope} label="Diff scope" options={[{ value: 'unstaged', label: 'Unstaged' }, { value: 'staged', label: 'Staged' }]} onChange={(value) => { setActionError(''); setScope(value as 'unstaged' | 'staged') }} /><button type="button" className="button button--compact" disabled={readOnly || !git.files.some((file) => file.staged)} onClick={() => setCommitOpen(true)}>Commit</button></div>
-      {actionError ? <p className="changes-error" role="alert">{actionError}</p> : null}
+      <div className="changes-scopes"><Segmented value={scope} label="Diff scope" options={[{ value: 'unstaged', label: 'Unstaged' }, { value: 'staged', label: 'Staged' }]} onChange={(value) => { setActionError(''); setScope(value as 'unstaged' | 'staged') }} /><button type="button" className="button button--compact" disabled={readOnly || busy || !git.files.some((file) => file.staged)} onClick={() => { setActionError(''); setCommitOpen(true) }}>Commit</button></div>
+      {actionError && !commitOpen && !confirmUndo ? <p className="changes-error" role="alert">{actionError}</p> : null}
       <div className="changes-body">
         <div className="file-changes scroll-area">
-          <div className="file-changes__header"><span>{visibleFiles.length} changed {visibleFiles.length === 1 ? 'file' : 'files'}</span>{visibleFiles.length ? <button type="button" disabled={readOnly} onClick={() => void mutate(scope === 'staged' ? 'unstage' : 'stage', visibleFiles.map((file) => file.path))}>{scope === 'staged' ? 'Unstage all' : 'Stage all'}</button> : null}</div>
+          <div className="file-changes__header"><span>{visibleFiles.length} changed {visibleFiles.length === 1 ? 'file' : 'files'}</span>{visibleFiles.length ? <button type="button" disabled={readOnly || busy} onClick={() => void mutate(scope === 'staged' ? 'unstage' : 'stage', visibleFiles.map((file) => file.path))}>{scope === 'staged' ? 'Unstage all' : 'Stage all'}</button> : null}</div>
           {visibleFiles.map((file) => <button type="button" key={file.path} className={selectedPath === file.path ? 'is-selected' : ''} onClick={() => setSelectedPath(file.path)}><File size={13} /><span title={file.path}>{file.path}</span><small className="additions">+{file.additions}</small><small className="deletions">−{file.deletions}</small><span className="file-status">{file.status}</span></button>)}
           {visibleFiles.length === 0 ? <p className="file-changes__empty">No {scope} changes.</p> : null}
         </div>
         <div className="diff-pane scroll-area">
-          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{scope === 'unstaged' ? <button type="button" disabled={readOnly} onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" disabled={readOnly} onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}<button type="button" className="danger-action" disabled={readOnly} onClick={() => setConfirmUndo(selectedPath)}><Undo2 size={12} /> Undo changes</button></div></div> : null}
+          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{busy ? <LoaderCircle className="spin" size={12} /> : null}{scope === 'unstaged' ? <button type="button" disabled={readOnly || busy} onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" disabled={readOnly || busy} onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}<button type="button" className="danger-action" disabled={readOnly || busy} onClick={() => { setActionError(''); setConfirmUndo(selectedPath) }}><Undo2 size={12} /> Undo changes</button></div></div> : null}
           {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={15} /> Loading diff…</div> : <DiffView text={diff} />}
         </div>
       </div>
-      {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} footer={<><button className="button" type="button" onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={readOnly || !commitMessage.trim()} onClick={() => void commit()}>Commit changes</button></>}><label className="field"><span>Commit message</span><div className="commit-message-input"><input autoFocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /><button type="button" className="button button--compact" onClick={fillCommitSummary} title="Generate a summary from staged files"><Sparkles size={13} /> Generate summary</button></div></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p></Modal> : null}
-      {confirmUndo ? <Modal title="Undo file changes?" onClose={() => setConfirmUndo(null)} footer={<><button className="button" type="button" onClick={() => setConfirmUndo(null)}>Cancel</button><button className="button button--danger" type="button" disabled={readOnly} onClick={() => { const path = confirmUndo; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmUndo(null) }) }}>Undo changes</button></>}><p>This discards the staged and unstaged changes to <code>{confirmUndo}</code> and restores the file to its last commit. A new untracked file will be deleted.</p></Modal> : null}
+      {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} canClose={() => !busy} footer={<><button className="button" type="button" disabled={busy} onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={readOnly || busy || !commitMessage.trim()} onClick={() => void commit()}>{pendingAction === 'commit' ? <LoaderCircle className="spin" size={13} /> : null}Commit changes</button></>}><label className="field"><span>Commit message</span><div className="commit-message-input"><input data-autofocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /><button type="button" className="button button--compact" onClick={fillCommitSummary} title="Generate a summary from staged files"><Sparkles size={13} /> Generate summary</button></div></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p>{actionError ? <p className="changes-error" role="alert">{actionError}</p> : null}</Modal> : null}
+      {confirmUndo ? <Modal title="Undo file changes?" onClose={() => setConfirmUndo(null)} canClose={() => !busy} footer={<><button className="button" type="button" disabled={busy} onClick={() => setConfirmUndo(null)}>Cancel</button><button className="button button--danger" type="button" disabled={readOnly || busy} onClick={() => { const path = confirmUndo; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmUndo(null) }) }}>{pendingAction === 'restore' ? <LoaderCircle className="spin" size={13} /> : null}Undo changes</button></>}><p>This discards the staged and unstaged changes to <code>{confirmUndo}</code> and restores the file to its last commit. A new untracked file will be deleted.</p>{actionError ? <p className="changes-error" role="alert">{actionError}</p> : null}</Modal> : null}
     </div>
   )
 }

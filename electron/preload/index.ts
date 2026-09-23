@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentBrowserActivityEvent, AgentBrowserPointerEvent, AgentBrowserState, AppUpdateState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { AgentTerminalCloseRequest, AgentTerminalOpenRequest, AgentTerminalResult, AppUpdateState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -112,6 +112,9 @@ const api: PrimeWorkApi = {
     kill: (terminalId) => invoke('terminal:kill', terminalId),
     onData: (callback) => subscribe<TerminalDataEvent>('terminal:data', callback),
     onExit: (callback) => subscribe<TerminalExitEvent>('terminal:exit', callback),
+    onAgentOpen: (callback) => subscribe<AgentTerminalOpenRequest>('terminal:agent-open', callback),
+    onAgentClose: (callback) => subscribe<AgentTerminalCloseRequest>('terminal:agent-close', callback),
+    reportAgentRequest: (requestId, result: AgentTerminalResult) => { ipcRenderer.send('terminal:agent-result', requestId, result) },
   },
   git: {
     status: (cwd) => invoke('git:status', cwd),
@@ -140,17 +143,6 @@ const api: PrimeWorkApi = {
     get: () => invoke('settings:get'),
     update: (patch) => invoke('settings:update', patch),
     resetBrowserData: () => invoke('settings:reset-browser-data'),
-  },
-  browser: {
-    state: () => invoke('browser:state'),
-    attachTab: (tabId, webContentsId) => invoke('browser:attach-tab', tabId, webContentsId),
-    selectTab: (tabId) => invoke('browser:select-tab', tabId),
-    closeTab: (tabId) => invoke('browser:close-tab', tabId),
-    setPreviewContext: (webContentsId, sessionFile) => invoke('browser:set-preview-context', webContentsId, sessionFile),
-    navigateTab: (tabId, action, url) => invoke('browser:navigate-tab', tabId, action, url),
-    onChanged: (callback) => subscribe<AgentBrowserState>('browser:changed', callback),
-    onPointer: (callback) => subscribe<AgentBrowserPointerEvent>('browser:pointer', callback),
-    onActivity: (callback) => subscribe<AgentBrowserActivityEvent>('browser:activity', callback),
   },
   heartbeats: {
     list: () => invoke('heartbeats:list'),

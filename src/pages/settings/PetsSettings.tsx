@@ -1,9 +1,10 @@
 import { PawPrint, RefreshCw, Sparkles } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { PetAvatar } from '@/components/PetAvatar'
 import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 import type { SettingsSectionProps } from './contracts'
 import { SettingsToggle } from './SettingsToggle'
+import { nextChoiceIndex } from './AppearanceSettings'
 
 const BUILT_INS: PetDefinition[] = [
   { id: 'orb', petId: 'orb', displayName: 'Orb', description: 'A fluid voice orb that shifts with GooeyPi activity.', source: 'built-in', kind: 'orb' },
@@ -29,6 +30,14 @@ export function PetsSettings({ settings, onUpdate, pets }: SettingsSectionProps 
   useEffect(() => { void refresh() }, [refresh])
   const selected = useMemo(() => available.find((item) => item.id === settings.petId) ?? available.find((item) => item.id === 'orb') ?? BUILT_INS[0], [available, settings.petId])
   const codexCount = available.filter((item) => item.source === 'codex').length
+  const selectedIndex = Math.max(0, available.findIndex((item) => item.id === selected.id))
+  const onPetKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextChoiceIndex(event.key, selectedIndex, available.length)
+    if (next === null) return
+    event.preventDefault()
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+    void onUpdate({ petId: available[next].id, petEnabled: true })
+  }
 
   return (
     <>
@@ -47,12 +56,13 @@ export function PetsSettings({ settings, onUpdate, pets }: SettingsSectionProps 
             <output htmlFor="pet-size">{settings.petSize}%</output>
           </div>
         </div>
-        <div className="pet-grid" role="radiogroup" aria-label="Desktop pet">
-          {available.map((pet) => (
+        <div className="pet-grid" role="radiogroup" aria-label="Desktop pet" onKeyDown={onPetKeyDown}>
+          {available.map((pet, index) => (
             <button
               type="button"
               role="radio"
               aria-checked={pet.id === selected.id}
+              tabIndex={index === selectedIndex ? 0 : -1}
               className={pet.id === selected.id ? 'pet-choice is-active' : 'pet-choice'}
               key={pet.id}
               onClick={() => { void onUpdate({ petId: pet.id, petEnabled: true }) }}

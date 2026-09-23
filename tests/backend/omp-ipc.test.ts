@@ -123,7 +123,6 @@ function buildServices() {
     },
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), list: vi.fn(() => 'scheduled'), create: vi.fn(async () => 'created') },
-    browser: { ...serviceStub(), closeForSession: vi.fn(() => true), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
       plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), grantInferred: vi.fn(async () => 'omp-grant') },
@@ -327,19 +326,15 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.sessions.rename).toHaveBeenCalledWith(OMP_SESSION, 'Title')
     await expect(harness.invoke('sessions:archive', OMP_SESSION, true)).resolves.toBe(true)
     expect(harness.services.omp.sessions.archive).toHaveBeenCalledWith(OMP_SESSION, true)
-    expect(harness.services.browser.closeForSession).toHaveBeenCalledWith(OMP_SESSION)
     expect(harness.services.terminals.killForSession).toHaveBeenCalledWith(OMP_SESSION)
     await expect(harness.invoke('sessions:rename', PI_SESSION, 'Title')).resolves.toBe(false)
     expect(harness.services.pi.sessions.rename).toHaveBeenCalledWith(PI_SESSION, 'Title')
     await expect(harness.invoke('sessions:archive', PI_SESSION, true)).resolves.toBe(true)
     expect(harness.services.pi.sessions.archive).toHaveBeenCalledWith(PI_SESSION, true)
-    expect(harness.services.browser.closeForSession).toHaveBeenCalledWith(PI_SESSION)
     expect(harness.services.terminals.killForSession).toHaveBeenCalledWith(PI_SESSION)
 
-    harness.services.browser.closeForSession.mockClear()
     harness.services.terminals.killForSession.mockClear()
     await expect(harness.invoke('sessions:archive', OMP_SESSION, false)).resolves.toBe(true)
-    expect(harness.services.browser.closeForSession).not.toHaveBeenCalled()
     expect(harness.services.terminals.killForSession).not.toHaveBeenCalled()
   })
 

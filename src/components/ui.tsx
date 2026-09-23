@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string
   size?: 'small' | 'regular'
+  ref?: RefObject<HTMLButtonElement | null>
 }
 
 export function IconButton({ label, size = 'regular', className = '', children, ...props }: IconButtonProps) {
@@ -77,12 +78,22 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
   const previousFocus = useRef<HTMLElement | null>(null)
   const escapeRef = useRef(onEscape)
   escapeRef.current = onEscape
+  // Capture the opener during render, before children commit and before any
+  // autoFocus inside the overlay moves focus into the container. Capturing in
+  // the effect instead would record the overlay's own auto-focused field, which
+  // is disconnected on dismissal and can never receive focus back.
+  const wasActive = useRef(false)
+  if (active && !wasActive.current) {
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }
+  wasActive.current = active
   useEffect(() => {
     if (!active || !containerRef.current) return
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const container = containerRef.current
     const focusInitial = () => {
-      const preferred = container.querySelector<HTMLElement>('[autofocus]')
+      // Overlays opt into initial focus with data-autofocus; React's autoFocus
+      // prop does not render an attribute, so it cannot be selected here.
+      const preferred = container.querySelector<HTMLElement>('[data-autofocus], [autofocus]')
       const first = preferred ?? container.querySelector<HTMLElement>(focusableSelector)
       first?.focus()
     }
@@ -119,15 +130,22 @@ function prefersReducedMotion(): boolean {
 
 /** Wraps a close callback so dismiss gestures (Escape, backdrop, X) play the
  *  overlay's exit animation before the parent unmounts it. Action-driven closes
- *  (footer buttons, command selection) still call onClose directly. */
-export function useExitAnimation(onClose: () => void): { closing: boolean; requestClose(): void } {
+ *  (footer buttons, command selection) still call onClose directly.
+ *  `canClose` is consulted BEFORE the animation starts: return false to veto
+ *  dismissal (e.g. an unsaved-changes confirm the user cancelled). Vetoes that
+ *  live inside onClose run too late — the overlay has already faded out while
+ *  remaining mounted, inert-trapping the whole app. */
+export function useExitAnimation(onClose: () => void, canClose?: () => boolean): { closing: boolean; requestClose(): void } {
   const [closing, setClosing] = useState(false)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
+  const canCloseRef = useRef(canClose)
+  canCloseRef.current = canClose
   const pendingRef = useRef<number | undefined>(undefined)
   useEffect(() => () => { if (pendingRef.current !== undefined) window.clearTimeout(pendingRef.current) }, [])
   const requestClose = useCallback(() => {
     if (pendingRef.current !== undefined) return
+    if (canCloseRef.current && !canCloseRef.current()) return
     if (prefersReducedMotion()) { closeRef.current(); return }
     setClosing(true)
     pendingRef.current = window.setTimeout(() => { pendingRef.current = undefined; closeRef.current() }, OVERLAY_EXIT_MS)
@@ -192,9 +210,9 @@ export function ImageLightbox({ source, alt, title, onClose }: { source: string;
   )
 }
 
-export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
+export function Modal({ title, children, onClose, canClose, footer }: { title: string; children: ReactNode; onClose(): void; canClose?: () => boolean; footer?: ReactNode }) {
   const titleId = useId()
-  const { closing, requestClose } = useExitAnimation(onClose)
+  const { closing, requestClose } = useExitAnimation(onClose, canClose)
   const modalRef = useFocusTrap<HTMLElement>(true, requestClose)
   useAppShellOverlay(true)
   return createPortal(

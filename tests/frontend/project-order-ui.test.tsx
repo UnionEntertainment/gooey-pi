@@ -115,17 +115,6 @@ beforeEach(() => {
       setMcpEnabled: vi.fn(async () => true),
       mutateCapability: vi.fn(async () => true),
     },
-    browser: {
-      state: vi.fn(async () => ({ tabs: [] })),
-      attachTab: vi.fn(async () => true),
-      selectTab: vi.fn(async () => true),
-      closeTab: vi.fn(async () => true),
-      navigateTab: vi.fn(async () => true),
-      setPreviewContext: vi.fn(async () => true),
-      onChanged: vi.fn(() => () => undefined),
-      onPointer: vi.fn(() => () => undefined),
-      onActivity: vi.fn(() => () => undefined),
-    },
     heartbeats: {
       list: vi.fn(async () => []),
       manage: vi.fn(async () => true),
@@ -148,6 +137,20 @@ beforeEach(() => {
         return settings
       }),
       resetBrowserData: vi.fn(async () => true),
+    },
+    terminal: {
+      create: vi.fn(async () => ({ terminalId: 't-1', shell: '/bin/zsh' })),
+      bindSession: vi.fn(async () => true),
+      input: vi.fn(),
+      resize: vi.fn(),
+      setActiveContext: vi.fn(),
+      clearActiveContext: vi.fn(),
+      kill: vi.fn(async () => true),
+      onData: vi.fn(() => () => undefined),
+      onExit: vi.fn(() => () => undefined),
+      onAgentOpen: vi.fn(() => () => undefined),
+      onAgentClose: vi.fn(() => () => undefined),
+      reportAgentRequest: vi.fn(),
     },
     git: {
       status: vi.fn(async () => ({ isRepo: false, files: [] })),
@@ -192,15 +195,16 @@ describe('project ordering controls in App', () => {
     await act(async () => root.render(<App />))
     await waitFor(() => container.querySelector('.sidebar__section-heading'))
 
-    expect([...container.querySelectorAll('.project-row__main')].map((button) => button.textContent)).toEqual(['Inferred', 'Alpha', 'Zeta'])
+    expect([...container.querySelectorAll('.project-row__main')].map((button) => button.textContent)).toEqual(['GooeyPi', 'Inferred', 'Alpha', 'Zeta'])
     await press(container.querySelector('[aria-label="Sort projects"]')!)
     await press([...container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent?.includes('Alphabetical'))!)
     expect(bridge.settings.update).toHaveBeenCalledWith({ projectSortMode: 'alphabetical' })
 
     await press(container.querySelector('[aria-label="Sort projects"]')!)
-    expect([...container.querySelectorAll('.project-row__main')].map((button) => button.textContent)).toEqual(['Alpha', 'Inferred', 'Zeta'])
+    expect([...container.querySelectorAll('.project-row__main')].map((button) => button.textContent)).toEqual(['GooeyPi', 'Alpha', 'Inferred', 'Zeta'])
     await act(async () => {
-      container.querySelector('.project-row')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))
+      const alphaRow = [...container.querySelectorAll<HTMLElement>('.project-row')].find((row) => row.textContent?.includes('Alpha'))
+      alphaRow?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))
     })
     const pin = [...container.querySelectorAll('[aria-label^="Project options"] button')].find((button) => button.textContent?.includes('Pin project'))
     expect(pin).toBeDefined()

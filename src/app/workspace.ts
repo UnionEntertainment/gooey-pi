@@ -7,6 +7,8 @@ export interface WorkspaceSnapshot {
   session?: SessionRecord
   cwd?: string
   sessionFile?: string
+  /** True for sessions running in GooeyPi's app-managed workspace (no project). */
+  global?: boolean
 }
 
 export const requestFailureMessage = (error: unknown) => {

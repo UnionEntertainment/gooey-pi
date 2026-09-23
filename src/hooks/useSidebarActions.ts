@@ -6,6 +6,7 @@ type SidebarActions = Pick<SidebarProps,
   | 'onSelectSession'
   | 'onNavigate'
   | 'onNewSession'
+  | 'onNewGlobalSession'
   | 'onAddProject'
   | 'onRemoveProject'
   | 'onSetProjectSortMode'
@@ -15,6 +16,7 @@ type SidebarActions = Pick<SidebarProps,
   | 'onOpenPalette'
   | 'onRenameSession'
   | 'onArchiveSession'
+  | 'onRestoreSession'
 >
 
 export interface SidebarActionProxy {
@@ -31,6 +33,7 @@ export function createSidebarActionProxy(initialActions: SidebarActions): Sideba
       onSelectSession: (session) => current.onSelectSession(session),
       onNavigate: (view) => current.onNavigate(view),
       onNewSession: (project) => current.onNewSession(project),
+      onNewGlobalSession: () => current.onNewGlobalSession?.(),
       onAddProject: () => current.onAddProject(),
       onRemoveProject: (project) => current.onRemoveProject(project),
       onSetProjectSortMode: (mode) => current.onSetProjectSortMode?.(mode),
@@ -40,6 +43,7 @@ export function createSidebarActionProxy(initialActions: SidebarActions): Sideba
       onOpenPalette: () => current.onOpenPalette(),
       onRenameSession: (session, title) => current.onRenameSession(session, title),
       onArchiveSession: (session) => current.onArchiveSession(session),
+      onRestoreSession: (session) => current.onRestoreSession?.(session),
     },
     update(actions) { current = actions },
   }

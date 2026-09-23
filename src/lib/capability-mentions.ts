@@ -47,8 +47,8 @@ export function findCapabilityMentions(value: string, skills: readonly SkillReco
 
 function routingInstruction(mention: CapabilityMention): string {
   const token = mention.text
-  if (mention.skill.id === 'prime-work-browser' || mention.skill.id === 'omp-work-browser') {
-    return `${token}: use GooeyPi's in-app Browser capability and its own browser tools. Do not substitute Chrome, an external browser, or another connected browser tool.`
+  if (mention.skill.id === 'ego-browser') {
+    return `${token}: use the ego lite browser through the ego-browser skill and its ego-browser CLI. Do not substitute Chrome, an in-app browser, or another connected browser tool.`
   }
   if (mention.skill.id === 'prime-work-schedules' || mention.skill.id === 'omp-work-schedules') {
     return `${token}: use GooeyPi's Scheduled tasks capability and its own schedule tools.`

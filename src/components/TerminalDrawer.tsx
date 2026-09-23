@@ -43,10 +43,13 @@ interface TerminalTab {
 interface TerminalViewHandle {
   clear(): void
   clearSelection(): void
+  focus(): void
   readSelection(): Pick<TerminalPromptContext, 'text' | 'truncated'>
 }
 
 interface TerminalViewProps {
+  id: string
+  labelledBy: string
   cwd?: string
   sessionPath?: string
   shell?: string
@@ -59,6 +62,7 @@ interface TerminalViewProps {
   onOpenLink?(url: string, external: boolean): void
   onExit?(exitCode?: number): void
 }
+
 
 export interface TerminalDrawerHandle {
   clearSelection(): void
@@ -116,7 +120,7 @@ function readTerminalContent(terminal: Terminal): { content: string; contentTrun
 }
 
 
-const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView({ cwd, sessionPath, shell, command, label, visible, onStateChange, onSelectionChange, onError, onOpenLink, onExit }, ref) {
+const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView({ id, labelledBy, cwd, sessionPath, shell, command, label, visible, onStateChange, onSelectionChange, onError, onOpenLink, onExit }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const terminalIdRef = useRef<string | null>(null)
@@ -142,6 +146,7 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
   useImperativeHandle(ref, () => ({
     clear: () => terminalRef.current?.clear(),
     clearSelection: () => terminalRef.current?.clearSelection(),
+    focus: () => terminalRef.current?.focus(),
     readSelection: () => {
       const terminal = terminalRef.current
       return terminal ? boundTerminalText(terminal.getSelection(), TERMINAL_SELECTION_MAX_CHARS) : { text: '', truncated: false }
@@ -172,7 +177,6 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
     }
     requestAnimationFrame(() => {
       try { fitRef.current?.fit() } catch { /* tab is transitioning */ }
-      terminalRef.current?.focus()
       scheduleActiveContext()
     })
   }, [visible, label])
@@ -313,7 +317,7 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
     }
   }, [command, cwd, shell])
 
-  return <div className="terminal-surface" ref={containerRef} hidden={!visible}/>
+  return <div className="terminal-surface" ref={containerRef} hidden={!visible} id={id} role="tabpanel" aria-labelledby={labelledBy}/>
 })
 
 function createTab(number: number, shell?: string, command?: string, label?: string, onExit?: (exitCode?: number) => void, id: string = crypto.randomUUID()): TerminalTab {
@@ -335,6 +339,7 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
   const [tabs, setTabs] = useState<TerminalTab[]>(() => [firstTabRef.current!])
   const [activeTabId, setActiveTabId] = useState(() => firstTabRef.current!.id)
   const [maximized, setMaximized] = useState(false)
+  const drawerRef = useRef<HTMLElement>(null)
   const tabsRef = useRef(tabs)
   const activeTabIdRef = useRef(activeTabId)
   const onSelectionChangeRef = useRef(onSelectionChange)
@@ -388,20 +393,68 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
     setActiveTabId(tab.id)
   }
 
+  const restoreFocusAfterClose = () => {
+    // The focused control unmounts with the drawer; land on the composer.
+    const active = document.activeElement
+    if (!(active instanceof HTMLElement) || !drawerRef.current?.contains(active)) return
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('.composer-input textarea')?.focus())
+  }
+
+  const closeDrawer = () => {
+    restoreFocusAfterClose()
+    onClose()
+  }
+
   const closeTerminal = (tabId: string) => {
     const index = tabs.findIndex((tab) => tab.id === tabId)
     if (index === -1) return
     const tab = tabs[index]
     tab.onExit?.()
     if (tabs.length === 1) {
-      onClose()
+      closeDrawer()
       return
     }
     const nextTabs = tabs.filter((candidate) => candidate.id !== tabId)
     setTabs(nextTabs)
     viewRefs.current.delete(tabId)
-    if (activeTabId === tabId) setActiveTabId(nextTabs[Math.min(index, nextTabs.length - 1)].id)
+    const nextActiveId = activeTabId === tabId ? nextTabs[Math.min(index, nextTabs.length - 1)].id : activeTabId
+    if (activeTabId === tabId) setActiveTabId(nextActiveId)
+    // The close button (or the whole surface) unmounts; move focus to the
+    // surviving active tab instead of dropping it on the document.
+    const active = document.activeElement
+    if (active instanceof HTMLElement && drawerRef.current?.contains(active)) {
+      requestAnimationFrame(() => document.getElementById(`terminal-tab-${nextActiveId}`)?.focus())
+    }
   }
+
+  const moveTab = (current: number, key: string) => {
+    let next = current
+    if (key === 'ArrowRight') next = (current + 1) % tabs.length
+    else if (key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length
+    else if (key === 'Home') next = 0
+    else if (key === 'End') next = tabs.length - 1
+    else return
+    const tab = tabs[next]
+    setActiveTabId(tab.id)
+    requestAnimationFrame(() => document.getElementById(`terminal-tab-${tab.id}`)?.focus())
+  }
+
+  // The maximized drawer covers the conversation pane; keep it out of the
+  // tab order and the accessibility tree until the drawer is restored.
+  useEffect(() => {
+    if (!maximized || !visible) return
+    const pane = document.querySelector<HTMLElement>('.conversation-pane')
+    if (!pane) return
+    const wasInert = pane.inert
+    const previousHidden = pane.getAttribute('aria-hidden')
+    pane.inert = true
+    pane.setAttribute('aria-hidden', 'true')
+    return () => {
+      pane.inert = wasInert
+      if (previousHidden === null) pane.removeAttribute('aria-hidden')
+      else pane.setAttribute('aria-hidden', previousHidden)
+    }
+  }, [maximized, visible])
 
   const updateTab = (tabId: string, state: Pick<TerminalTab, 'shellName' | 'connected'>) => {
     setTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, ...state } : tab))
@@ -415,13 +468,16 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
   }
 
   return (
-    <section className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal" hidden={!visible}>
+    <section ref={drawerRef} className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal" hidden={!visible}>
       {!maximized ? <ResizeHandle orientation="horizontal" label="Resize terminal" value={height} min={minHeight} max={maxHeight} defaultValue={defaultHeight} onChange={onHeightChange} /> : null}
       <div className="terminal-toolbar">
         <div className="terminal-tabs" role="tablist" aria-label="Terminal tabs">
-          {tabs.map((tab) => (
+          {tabs.map((tab, index) => (
             <div className={`terminal-tab ${tab.id === activeTabId ? 'is-active' : ''}`} key={tab.id}>
-              <button type="button" role="tab" aria-selected={tab.id === activeTabId} onClick={() => setActiveTabId(tab.id)}>
+              <button type="button" id={`terminal-tab-${tab.id}`} role="tab" aria-selected={tab.id === activeTabId} aria-controls={`terminal-panel-${tab.id}`} tabIndex={tab.id === activeTabId ? 0 : -1} onClick={() => setActiveTabId(tab.id)} onKeyDown={(event) => {
+                if (['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) { event.preventDefault(); moveTab(index, event.key) }
+                else if (event.key === 'Enter' && tab.id === activeTabId) { event.preventDefault(); viewRefs.current.get(tab.id)?.focus() }
+              }}>
                 <TerminalIcon size={14}/>
 
                 <span>{tab.label ?? `${tab.shellName} ${tab.number}`}</span>
@@ -436,13 +492,15 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
           <span className="terminal-cwd" title={cwd}>{cwd?.split('/').at(-1) ?? 'No project'}</span>
           <IconButton label="Clear terminal" onClick={() => viewRefs.current.get(activeTabId)?.clear()}><Trash2 size={13}/></IconButton>
           <IconButton label={maximized ? 'Restore terminal' : 'Maximize terminal'} onClick={() => setMaximized((value) => !value)}>{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</IconButton>
-          <IconButton label="Close terminal" onClick={onClose}><X size={14}/></IconButton>
+          <IconButton label="Close terminal" onClick={closeDrawer}><X size={14}/></IconButton>
         </div>
       </div>
       <div className="terminal-views">
         {tabs.map((tab) => (
           <TerminalView
             key={tab.id}
+            id={`terminal-panel-${tab.id}`}
+            labelledBy={`terminal-tab-${tab.id}`}
             ref={(handle) => { if (handle) viewRefs.current.set(tab.id, handle); else viewRefs.current.delete(tab.id) }}
             cwd={cwd}
             sessionPath={sessionPath}

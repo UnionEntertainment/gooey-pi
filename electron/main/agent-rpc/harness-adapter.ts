@@ -113,7 +113,7 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
       args.push('--model', input.modelId)
     }
     if (input.thinking) args.push('--thinking', input.thinking)
-    for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH, input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH]) {
+    for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.GOOEYPI_EGO_BROWSER_SKILL_PATH, input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
     for (const injection of extensionInjections('prime')) {
@@ -156,6 +156,8 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
       if (!OMP_APPROVAL_MODES.has(input.approvalMode)) throw new TypeError('Invalid approval mode')
       args.push('--approval-mode', input.approvalMode)
     }
+    const egoBrowserSkillPath = input.environment.GOOEYPI_EGO_BROWSER_SKILL_PATH
+    if (egoBrowserSkillPath && !unsafeArgValue(egoBrowserSkillPath)) args.push('--append-system-prompt', egoBrowserSkillPath)
     const computerUseSkillPath = input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--append-system-prompt', computerUseSkillPath)
     // OMP has no --skill flag: app capabilities are injected as explicit,
@@ -221,6 +223,8 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
       args.push('--model', input.modelId)
     }
     if (input.thinking) args.push('--thinking', input.thinking)
+    const egoBrowserSkillPath = input.environment.GOOEYPI_EGO_BROWSER_SKILL_PATH
+    if (egoBrowserSkillPath && !unsafeArgValue(egoBrowserSkillPath)) args.push('--skill', egoBrowserSkillPath)
     const computerUseSkillPath = input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--skill', computerUseSkillPath)
     // App capabilities are injected as explicit, self-contained extensions

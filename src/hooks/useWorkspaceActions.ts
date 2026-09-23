@@ -23,6 +23,8 @@ export interface WorkspaceActionsDeps {
   projects: ProjectRecord[]
   sessions: SessionRecord[]
   activeProject: ProjectRecord | undefined
+  /** App-managed workspace directory for sessions started without a project. */
+  globalWorkspaceDir?: string
   workspace: ReturnType<typeof useWorkspaceRuntime>
   settingsState: ReturnType<typeof useAppSettings>
   layout: ReturnType<typeof usePanelLayout>
@@ -43,6 +45,7 @@ export interface WorkspaceActionsDeps {
   resetBrowserView(): void
   closeTerminalForSession(sessionPath: string): void
   clearSessionAttention(session: SessionRecord): void
+  markReviewed(session: SessionRecord): void
   reportError(error: unknown): void
 }
 
@@ -190,7 +193,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     persistPanel({ terminalOpen: !settingsState.terminalOpen })
   }
   const selectProject = async (project: ProjectRecord) => {
-    const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
+    const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, markReviewed, reportError } = getDeps()
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     if (workspace.workspaceRef.current.project?.id === project.id) {
       setView('session')
@@ -199,6 +202,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
     if (session) {
       clearSessionAttention(session)
+      markReviewed(session)
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
     }
     const generation = workspace.activateWorkspace(project, session)
@@ -212,22 +216,34 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
   const selectSession = async (session: SessionRecord) => {
-    const { layout, settingsState, projects, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
+    const { layout, settingsState, projects, workspace, setSessions, setView, clearSessionAttention, markReviewed, reportError, globalWorkspaceDir } = getDeps()
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     clearSessionAttention(session)
     setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
+    markReviewed(session)
     const project = findProjectForSession(projects, session)
-    if (!project) { reportError('This session is not contained by an available project.'); return }
-    const generation = workspace.activateWorkspace(project, session)
+    const global = !project && Boolean(globalWorkspaceDir) && session.projectPath === globalWorkspaceDir
+    if (!project && !global) { reportError('This session is not contained by an available project.'); return }
+    const generation = workspace.activateWorkspace(project, session, undefined, global ? session.projectPath : undefined)
     setView('session')
     try { await workspace.reconcileRuntime(generation) }
     catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
+  }
+  const newGlobalSession = () => {
+    const { bridge, initialized, layout, settingsState, workspace, setView, setPaletteOpen, setToast, globalWorkspaceDir } = getDeps()
+    if (!initialized) return
+    if (!globalWorkspaceDir) { setToast('Global sessions are available in the desktop app.'); return }
+    if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
+    clearComposerDraft('global:new')
+    workspace.activateWorkspace(undefined, undefined, undefined, globalWorkspaceDir)
+    if (!bridge) workspace.setMessages([])
+    setView('session'); setPaletteOpen(false)
   }
   const newSession = (requestedProject?: ProjectRecord) => {
     const { bridge, initialized, layout, settingsState, activeProject, workspace, setView, setPaletteOpen } = getDeps()
     if (!initialized) return
     const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
-    if (!project) return
+    if (!project) { newGlobalSession(); return }
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     clearComposerDraft(`${project.id}:new`)
     workspace.activateWorkspace(project)
@@ -257,7 +273,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         clearSessionAttention(session)
         closeTerminalForSession(session.filePath)
       }
-      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived, unread: archived ? false : item.unread } : item))
+      setSessions((items) => items.map((item) => item.filePath === session.filePath ? { ...item, archived, unread: archived ? false : item.unread } : item))
       if (archived && workspace.workspaceRef.current.session?.id === session.id) {
         resetBrowserView()
         newSession()
@@ -401,12 +417,15 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         return bridge.sessions.followUp(sessionFile, prompt, intent)
       }
       try {
-        if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a session.'); return }
+        if (!admitted.cwd) {
+          if (bridge) { reportError('Add a project before starting a session.'); return }
+        }
         // The harness comes from the workspace's own project, never global
         // settings: a prompt landing between a harness switch and the
         // bootstrap effect's workspace reset would otherwise start the new
-        // harness against the old workspace's cwd and session.
-        const activeHarness = admitted.project.harness
+        // harness against the old workspace's cwd and session. Project-less
+        // GooeyPi workspaces fall back to the selected harness.
+        const activeHarness = admitted.project?.harness ?? settingsState.settings.activeHarness
         if (images.length > 0 && !provider.selectedModel?.input.includes('image')) {
           reportError('This model does not accept images. Remove the attachment or choose a vision model.')
           return
@@ -429,7 +448,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           demoTimerRef.current.push(window.setTimeout(() => workspace.setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, completedAt: Date.now(), parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1_250))
           return
         }
-        await grantProject(admitted.project)
+        if (admitted.project) await grantProject(admitted.project)
         if (workspace.workspaceRef.current.generation !== generation) return
         const selected = workspace.workspaceRef.current
         if (!selected.cwd) throw new Error('The selected workspace has no working directory.')
@@ -717,7 +736,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
 
   return {
     grantProject, persistPanel, toggleSidebar, toggleInspector, toggleTerminal,
-    selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived, togglePinSession,
+    selectProject, selectSession, newSession, newGlobalSession, navigate, renameSession, setSessionArchived, togglePinSession,
     addProject, removeProject, togglePinProject, setProjectSortMode, sendPrompt, stopRuntime, installSkill, installExtension, setMcpSupport, connectMcp, setMcpEnabled, mutateCapability,
     createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
     openBrowser, openChanges,

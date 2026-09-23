@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExtensionAPI } from 'prime-agent'
 import { EXTENSION_INJECTIONS, SHIPPED_EXTENSION_FILENAMES, type ExtensionInjection } from '../../electron/main/extension-manifest'
-import type { OmpExtensionApi } from '../../assets/extensions/omp-work-browser'
+import type { OmpExtensionApi } from '../../assets/extensions/omp-work-terminal'
 import type { PiFastModeExtensionApi } from '../../assets/extensions/pi-work-fast-mode'
 
 type Registration = { kind: 'tool' | 'command' | 'event'; name: string }
@@ -87,11 +87,8 @@ const fixtureFactories = {
 }
 
 const expectedRegistrations: Record<string, Registration[]> = {
-  'prime-work-browser.ts': [
-    ...['terminal_read', 'browser_tabs', 'browser_navigate', 'browser_screenshot', 'browser_read_page', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_evaluate'].map((name) => ({ kind: 'tool' as const, name })),
-  ],
-  'omp-work-browser.ts': [
-    ...['terminal_read', 'browser_tabs', 'browser_navigate', 'browser_screenshot', 'browser_read_page', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_evaluate'].map((name) => ({ kind: 'tool' as const, name })),
+  'omp-work-terminal.ts': [
+    ...['terminal_read', 'terminal_open', 'terminal_stop'].map((name) => ({ kind: 'tool' as const, name })),
   ],
   'omp-work-ask-user.ts': [{ kind: 'tool', name: 'ask_user' }],
   'omp-work-collaboration.ts': [
@@ -107,14 +104,13 @@ const expectedRegistrations: Record<string, Registration[]> = {
 }
 
 const brokerVariables: Partial<Record<ExtensionInjection['capability'], readonly [string, string]>> = {
-  browser: ['PRIME_WORK_BROWSER_URL', 'PRIME_WORK_BROWSER_TOKEN'],
+  terminal: ['PRIME_WORK_TERMINAL_URL', 'PRIME_WORK_TERMINAL_TOKEN'],
   schedule: ['PRIME_WORK_SCHEDULE_URL', 'PRIME_WORK_SCHEDULE_TOKEN'],
   collaboration: ['GOOEYPI_COLLABORATION_URL', 'GOOEYPI_COLLABORATION_TOKEN'],
 }
 
 const LEGACY_UNPREFIXED_TOOLS = [
-  'ask_user', 'terminal_read', 'browser_tabs', 'browser_navigate', 'browser_screenshot', 'browser_read_page',
-  'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_evaluate',
+  'ask_user', 'terminal_read', 'terminal_open', 'terminal_stop',
   'scheduled_tasks_list', 'scheduled_task_create_once', 'scheduled_task_create_recurring',
   'scheduled_task_update', 'scheduled_task_manage',
 ]
@@ -123,9 +119,11 @@ async function loadExtension(injection: ExtensionInjection, configured: boolean)
   vi.resetModules()
   vi.unstubAllEnvs()
   const variables = brokerVariables[injection.capability]
-  if (configured && variables) {
-    vi.stubEnv(variables[0], 'http://127.0.0.1:1/')
-    vi.stubEnv(variables[1], 'inert-test-token')
+  if (variables) {
+    // The app injects these into its own agent runtimes; clear them so the
+    // unconfigured case is hermetic even when the suite runs inside GooeyPi.
+    vi.stubEnv(variables[0], configured ? 'http://127.0.0.1:1/' : undefined)
+    vi.stubEnv(variables[1], configured ? 'inert-test-token' : undefined)
   }
   const url = pathToFileURL(join(process.cwd(), 'assets', 'extensions', injection.filename)).href
   return (await import(url)).default as (api: object) => void | Promise<void>

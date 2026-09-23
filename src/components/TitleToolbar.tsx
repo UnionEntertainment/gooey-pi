@@ -10,7 +10,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, IconButton } from './ui'
 import { ProjectRunControl, type ProjectScriptKind } from './ProjectRunControl'
-import type { MouseEvent } from 'react'
+import { useEffect, useRef, type MouseEvent } from 'react'
 
 const viewTitles: Record<Exclude<WorkspaceView, 'session'>, MessageKey> = {
   projects: 'nav.projects', activity: 'nav.activity', scheduled: 'nav.scheduled', plugins: 'nav.capabilities', settings: 'nav.settings',
@@ -56,13 +56,25 @@ export function TitleToolbar({ project, gitBranch, view, productName = 'Prime Wo
   const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
   const terminalShortcut = shortcutLabel(platform, ['Primary', 'J'])
   const browserShortcut = shortcutLabel(platform, ['Primary', 'Shift', 'B'])
+  const navRef = useRef<HTMLDivElement>(null)
+  const wasSidebarOpen = useRef(sidebarOpen)
+  // The 'Show sidebar' button only exists while the sidebar is closed, so the
+  // focus trap's saved opener is disconnected on close. When closing leaves
+  // focus on <body> (the opener is gone), move it to the replacement toggle.
+  useEffect(() => {
+    const wasOpen = wasSidebarOpen.current
+    wasSidebarOpen.current = sidebarOpen
+    if (wasOpen && !sidebarOpen && document.activeElement === document.body) {
+      navRef.current?.querySelector<HTMLElement>('.icon-button')?.focus()
+    }
+  }, [sidebarOpen])
   return (
     <header className="title-toolbar drag-region">
       {!sidebarOpen && platform === 'darwin' ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
       {platform === 'win32' ? <nav className="windows-app-menu" aria-label="Application menu">
         {windowsMenus.map(({ name, label }) => <button key={name} type="button" className="windows-app-menu__button" onClick={(event) => openApplicationMenu(name, event)}>{label}</button>)}
       </nav> : null}
-      <div className="title-toolbar__nav no-drag">
+      <div ref={navRef} className="title-toolbar__nav no-drag">
         {!sidebarOpen ? <IconButton label={`Show sidebar (${sidebarShortcut})`} onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
       <div className="title-toolbar__identity">

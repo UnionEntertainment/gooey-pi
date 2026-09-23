@@ -32,6 +32,8 @@ export function DraftSettingField({
   const stateRef = useRef(state)
   const nextCommitId = useRef(0)
   const inFlight = useRef<Promise<void> | null>(null)
+  const queuedCommit = useRef(false)
+  const commitRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   const dispatch = useCallback((action: DraftAction) => {
     const next = reduceDraftState(stateRef.current, action)
@@ -44,7 +46,12 @@ export function DraftSettingField({
   }, [committedValue, dispatch])
 
   const commit = useCallback(() => {
-    if (inFlight.current) return inFlight.current
+    if (inFlight.current) {
+      // A save is already running: remember that a newer draft was requested so
+      // it is committed once the in-flight save settles instead of being lost.
+      queuedCommit.current = true
+      return inFlight.current
+    }
     const current = stateRef.current
     const validationError = validate(current.value)
     if (validationError) {
@@ -61,13 +68,20 @@ export function DraftSettingField({
       .catch((error: unknown) => { dispatch({ type: 'reject', id, error: errorMessage(error) }) })
       .finally(() => {
         if (inFlight.current === operation) inFlight.current = null
+        if (queuedCommit.current) {
+          queuedCommit.current = false
+          void commitRef.current()
+        }
       })
     inFlight.current = operation
     return operation
   }, [dispatch, normalize, onCommit, validate])
+  commitRef.current = commit
 
   const onChange = (value: string) => {
-    dispatch({ type: 'edit', value, error: validate(value) })
+    // Only revalidate live once an error is already visible; the first check
+    // runs on blur/Enter/Save so mid-edit typing is never flagged.
+    dispatch({ type: 'edit', value, error: stateRef.current.error ? validate(value) : '' })
   }
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter') return

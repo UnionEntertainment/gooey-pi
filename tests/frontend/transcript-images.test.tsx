@@ -49,19 +49,25 @@ describe('transcript image lightbox', () => {
     expect(document.querySelector('[role="dialog"]')).toBe(dialog)
   })
 
-  it('closes on Escape or a click outside the image and restores thumbnail focus', () => {
+  it('closes on Escape or a click outside the image and restores thumbnail focus', async () => {
     const preview = container.querySelector('[aria-label="Expand pasted image"]') as HTMLButtonElement
     let dialog = openLightbox()
-    const close = dialog.querySelector('[aria-label="Close expanded image"]') as HTMLButtonElement
+    const close = dialog.querySelector('[aria-label="Close image preview"]') as HTMLButtonElement
 
-    act(() => close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    await act(async () => {
+      close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(preview)
     expect(container.hasAttribute('aria-hidden')).toBe(false)
 
     dialog = openLightbox()
     const backdrop = dialog.parentElement as HTMLElement
-    act(() => backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    await act(async () => {
+      backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(preview)
   })

@@ -367,6 +367,80 @@ describe('sidebar archive confirmation', () => {
   })
 })
 
+describe('sidebar archived section', () => {
+  const archivedSession: SessionRecord = { ...session, id: 'archived', filePath: '/sessions/archived.jsonl', title: 'Archived', archived: true }
+
+  it('lists archived sessions under a collapsed section and restores them', async () => {
+    const onRestoreSession = vi.fn(async () => undefined)
+    const onSelectSession = vi.fn()
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]}
+          sessions={[session, archivedSession]}
+          activeView="session"
+          onSelectProject={noop}
+          onSelectSession={onSelectSession}
+          onNavigate={noop}
+          onNewSession={noop}
+          onAddProject={noop}
+          onRemoveProject={noop}
+          onClose={noop}
+          onOpenPalette={noop}
+          onRenameSession={async () => undefined}
+          onArchiveSession={async () => undefined}
+          onRestoreSession={onRestoreSession}
+        />,
+      )
+    })
+
+    // The archived session is excluded from the project list but discoverable.
+    const projectRows = [...container.querySelectorAll('.project-group .session-row__title')].map((row) => row.textContent)
+    expect(projectRows).toEqual(['Session'])
+    const toggle = container.querySelector('.sidebar__archived-toggle')!
+    expect(toggle.textContent).toContain('Archived')
+    expect(container.querySelector('.session-list--archived')).toBeNull()
+
+    await press(toggle)
+    const archivedRow = container.querySelector('.session-list--archived .session-row')!
+    expect(archivedRow.textContent).toContain('Archived')
+
+    await press(archivedRow)
+    expect(onRestoreSession).toHaveBeenCalledWith(archivedSession)
+    expect(onSelectSession).toHaveBeenCalledWith(archivedSession)
+  })
+
+  it('restores without opening from the row action', async () => {
+    const onRestoreSession = vi.fn(async () => undefined)
+    const onSelectSession = vi.fn()
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]}
+          sessions={[archivedSession]}
+          activeView="session"
+          onSelectProject={noop}
+          onSelectSession={onSelectSession}
+          onNavigate={noop}
+          onNewSession={noop}
+          onAddProject={noop}
+          onRemoveProject={noop}
+          onClose={noop}
+          onOpenPalette={noop}
+          onRenameSession={async () => undefined}
+          onArchiveSession={async () => undefined}
+          onRestoreSession={onRestoreSession}
+        />,
+      )
+    })
+
+    await press(container.querySelector('.sidebar__archived-toggle')!)
+    await press(container.querySelector('[aria-label="Restore Archived"]')!)
+    expect(onRestoreSession).toHaveBeenCalledWith(archivedSession)
+    expect(onSelectSession).not.toHaveBeenCalled()
+  })
+})
+
 describe('sidebar session notifications', () => {
   it('mutes an acknowledged failed session without changing its failed status', async () => {
     const failedSession = { ...session, status: 'failed' as const }

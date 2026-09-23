@@ -11,7 +11,7 @@ import { DEFAULT_SETTINGS } from '../../src/lib/data'
 import { AgentSettings } from '../../src/pages/settings/AgentSettings'
 import { ProviderSettings } from '../../src/pages/settings/ProviderSettings'
 import { SettingsPage } from '../../src/pages/SettingsPage'
-import type { AppMeta, AppSettings, HarnessId, PrimeModelCatalog, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord } from '../../src/types/api'
+import type { AppMeta, AppSettings, HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -722,6 +722,39 @@ describe('provider catalog per harness', () => {
     await act(async () => { await state.refresh(true) })
     expect(state.model).toBe(primeCatalog.models[0].key)
   })
+  it('clamps effort to the levels the selected model supports', async () => {
+    const narrow: PrimeModelDescriptor = { ...primeCatalog.models[0], key: 'openai-codex/gpt-5.5', id: 'gpt-5.5', name: 'GPT-5.5', availableThinkingLevels: ['low', 'medium'] }
+    const catalog = { ...primeCatalog, models: [primeCatalog.models[0], narrow] }
+    const command = vi.fn(async () => ({ type: 'response', success: true }))
+    const bridge = {
+      providers: { catalog: vi.fn(async () => catalog), onAuthEvent: vi.fn().mockReturnValue(() => undefined) },
+      agent: { command },
+    } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useProviderCatalog>
+    function CatalogProbe() {
+      state = useProviderCatalog({ bridge, harness: 'prime', runtime: null, syncRuntime: async () => undefined, reportError })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<CatalogProbe />); await Promise.resolve() })
+    act(() => state.changeEffort('high'))
+    expect(state.effort).toBe('high')
+
+    // A level outside the selected model's list is ignored entirely.
+    act(() => state.changeEffort('xhigh'))
+    expect(state.effort).toBe('high')
+
+    // Switching to a model without 'high' clamps to its nearest default.
+    act(() => state.changeModel('openai-codex/gpt-5.5'))
+    expect(state.model).toBe('openai-codex/gpt-5.5')
+    expect(state.effort).toBe('medium')
+
+    // The parked unsent selection carries the clamped effort, not the stale one.
+    act(() => state.changeEffort('low'))
+    expect(state.effort).toBe('low')
+  })
+
 })
 
 describe('harness settings surfaces', () => {

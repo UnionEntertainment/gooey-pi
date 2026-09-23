@@ -1,9 +1,11 @@
 import { ChevronRight, ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { errorMessage } from '@/lib/errors'
 import type { HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor } from '@/types/api'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { Modal } from '@/components/ui'
+import { useVirtualRows } from '@/hooks/useVirtualRows'
+import { nextChoiceIndex } from './AppearanceSettings'
 
 interface ProviderSettingsProps {
   /** Active harness. OMP and Pi credentials stay CLI-owned; visibility toggles only affect GooeyPi. */
@@ -33,6 +35,14 @@ function authDescription(provider: PrimeProviderDescriptor): string {
 function activeFirst<T extends { enabled?: boolean }>(items: readonly T[]): T[] {
   return [...items].sort((left, right) => Number(right.enabled !== false) - Number(left.enabled !== false))
 }
+
+/** Fixed row height shared by group headers and model rows so the models view
+ *  can be virtualized as one flat list. Keep in sync with settings.css. */
+const MODEL_ROW_HEIGHT = 44
+
+type ModelListRow =
+  | { kind: 'header'; provider: PrimeProviderDescriptor; enabledCount: number; total: number; collapsed: boolean }
+  | { kind: 'model'; model: PrimeModelDescriptor }
 
 export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onSetModelEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
   // OMP and Pi own their credentials in their CLIs; GooeyPi only toggles visibility.
@@ -88,7 +98,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
 
   const saveApiKey = async () => {
     const provider = apiKeyProvider
-    if (!provider || !apiKey.trim()) return
+    if (!provider || !apiKey.trim() || busyProvider) return
     setBusyProvider(provider.id)
     setApiKeyError('')
     try {
@@ -111,6 +121,15 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   })
   const enableAll = () => run('enable-all', onSetAllEnabled)
   const disableAll = () => run('disable-all', onSetAllDisabled)
+  const views = ['providers', 'models'] as const
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextChoiceIndex(event.key, views.indexOf(view), views.length)
+    if (next === null) return
+    event.preventDefault()
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+    setView(views[next])
+    setQuery('')
+  }
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
@@ -122,13 +141,13 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
       <div className="settings-group__heading"><h2>{agentName} catalogue</h2><div className="provider-heading-actions">{catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>{externalAuth ? 'Hide all' : 'Disable all'}</button> : null}{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>{externalAuth ? 'Show all' : 'Enable all'}</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
       <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{externalAuth ? `${availableModelCount.toLocaleString()} models are shown in GooeyPi; ${agentName} checks credentials when you launch one` : `${availableModelCount.toLocaleString()} models are available with your current ${agentName} credentials`}</small> : null}</div>
       {catalog?.warning ? <p className="provider-catalog-warning" role="status">{catalog.warning}</p> : null}
-      <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view">
-        <button type="button" role="tab" aria-selected={view === 'providers'} className={view === 'providers' ? 'is-active' : ''} onClick={() => { setView('providers'); setQuery('') }}>Providers <span>{providerCount.toLocaleString()}</span></button>
-        <button type="button" role="tab" aria-selected={view === 'models'} className={view === 'models' ? 'is-active' : ''} onClick={() => { setView('models'); setQuery('') }}>Models <span>{modelCount.toLocaleString()}</span></button>
+      <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view" onKeyDown={onTabKeyDown}>
+        <button type="button" role="tab" id="provider-catalog-tab-providers" aria-selected={view === 'providers'} aria-controls="provider-catalog-panel-providers" tabIndex={view === 'providers' ? 0 : -1} className={view === 'providers' ? 'is-active' : ''} onClick={() => { setView('providers'); setQuery('') }}>Providers <span>{providerCount.toLocaleString()}</span></button>
+        <button type="button" role="tab" id="provider-catalog-tab-models" aria-selected={view === 'models'} aria-controls="provider-catalog-panel-models" tabIndex={view === 'models' ? 0 : -1} className={view === 'models' ? 'is-active' : ''} onClick={() => { setView('models'); setQuery('') }}>Models <span>{modelCount.toLocaleString()}</span></button>
       </div>
       <label className="provider-search"><Search size={13} /><input value={query} placeholder={view === 'providers' ? 'Search providers' : 'Search models'} aria-label={view === 'providers' ? 'Search providers' : 'Search models'} onChange={(event) => setQuery(event.target.value)} /></label>
       {error ? <p className="settings-error" role="alert">{error}</p> : null}
-      {view === 'providers' ? <div className="provider-list">
+      {view === 'providers' ? <div className="provider-list" role="tabpanel" id="provider-catalog-panel-providers" aria-labelledby="provider-catalog-tab-providers">
         {providers.map((provider) => {
           const busy = busyProvider === provider.id
           return <div className="provider-row" key={provider.id}>
@@ -142,27 +161,58 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
             </div>}
           </div>
         })}
-      </div> : <div className="provider-list provider-model-list">
-        {modelGroups.map(({ provider, models }) => {
-          const collapsed = collapsedModelProviders.has(provider.id)
-          const contentId = `provider-models-${provider.id.replace(/[^a-z0-9_-]/gi, '-')}`
-          return <div className={`provider-model-group${provider.enabled ? '' : ' is-disabled'}${collapsed ? ' is-collapsed' : ''}`} key={provider.id}>
-          <button type="button" className="provider-model-group__heading" aria-expanded={!collapsed} aria-controls={contentId} onClick={() => toggleModelProvider(provider.id)}><strong>{provider.name}</strong><small>{models.filter((model) => model.enabled !== false).length.toLocaleString()} of {models.length.toLocaleString()} on</small><ChevronRight className="provider-model-group__chevron" size={13} aria-hidden="true" /></button>
-          <div id={contentId} className="provider-model-group__models" hidden={collapsed}>{models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
-            <div className="provider-row__identity"><strong>{model.name}</strong><small>{model.id}</small></div>
-            <div className="provider-model-row__capabilities">
-              {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
-              {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
-              <span className={model.available && model.enabled !== false ? 'is-available' : ''}>{model.enabled === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
-            </div>
-            <label className="provider-row__toggle provider-model-row__toggle" title={model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${model.name} model`} checked={model.enabled !== false} disabled={busyProvider === `model:${model.key}`} onChange={(event) => void run(`model:${model.key}`, () => onSetModelEnabled(model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
-          </div>)}</div>
-        </div>})}
-      </div>}
+      </div> : <ModelListPanel modelGroups={modelGroups} collapsedProviders={collapsedModelProviders} onToggleProvider={toggleModelProvider} busyProvider={busyProvider} externalAuth={externalAuth} agentName={agentName} run={run} onSetModelEnabled={onSetModelEnabled} />}
       {catalog && view === 'providers' && !providers.length ? <p className="settings-empty">No providers match your search.</p> : null}
       {catalog && view === 'models' && !modelGroups.length ? <p className="settings-empty">No models match your search.</p> : null}
-      {apiKeyProvider ? <Modal title={`Connect ${apiKeyProvider.name}`} onClose={() => { if (!busyProvider) closeApiKey() }} footer={<><button type="button" className="button" disabled={Boolean(busyProvider)} onClick={closeApiKey}>Cancel</button><button type="button" className="button button--primary" disabled={Boolean(busyProvider) || !apiKey.trim()} onClick={() => void saveApiKey()}>Save API key</button></>}><p className="modal-intro">The key is sent directly to Prime Agent’s protected auth store. GooeyPi clears it from renderer state when this dialog closes.</p>{apiKeyError ? <p className="settings-error" role="alert">{apiKeyError}</p> : null}<label className="field"><span>API key</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} onChange={(event) => setApiKey(event.target.value)} /></label></Modal> : null}
+      {apiKeyProvider ? <Modal title={`Connect ${apiKeyProvider.name}`} onClose={closeApiKey} canClose={() => !busyProvider} footer={<><button type="button" className="button" disabled={Boolean(busyProvider)} onClick={closeApiKey}>Cancel</button><button type="submit" form="provider-api-key-form" className="button button--primary" disabled={Boolean(busyProvider) || !apiKey.trim()}>Save API key</button></>}><form id="provider-api-key-form" onSubmit={(event) => { event.preventDefault(); void saveApiKey() }}><p className="modal-intro">The key is sent directly to Prime Agent’s protected auth store. GooeyPi clears it from renderer state when this dialog closes.</p>{apiKeyError ? <p className="settings-error" role="alert">{apiKeyError}</p> : null}<label className="field"><span>API key</span><input data-autofocus type="password" value={apiKey} autoComplete="off" spellCheck={false} onChange={(event) => setApiKey(event.target.value)} /></label></form></Modal> : null}
     </section>
+  )
+}
+
+interface ModelListPanelProps {
+  modelGroups: Array<{ provider: PrimeProviderDescriptor; models: PrimeModelDescriptor[] }>
+  collapsedProviders: ReadonlySet<string>
+  onToggleProvider(providerId: string): void
+  busyProvider: string | null
+  externalAuth: boolean
+  agentName: string
+  run(providerId: string, action: () => Promise<void>): Promise<void>
+  onSetModelEnabled(modelKey: string, enabled: boolean): Promise<void>
+}
+
+/** The models tab: one flattened, virtualized list of group headers and model
+ *  rows. Lives in its own component so useVirtualRows mounts together with the
+ *  scrollable panel it measures. */
+function ModelListPanel({ modelGroups, collapsedProviders, onToggleProvider, busyProvider, externalAuth, agentName, run, onSetModelEnabled }: ModelListPanelProps) {
+  const rows = useMemo<ModelListRow[]>(() => modelGroups.flatMap(({ provider, models }) => {
+    const collapsed = collapsedProviders.has(provider.id)
+    const header: ModelListRow = { kind: 'header', provider, enabledCount: models.filter((model) => model.enabled !== false).length, total: models.length, collapsed }
+    return collapsed ? [header] : [header, ...models.map((model): ModelListRow => ({ kind: 'model', model }))]
+  }), [modelGroups, collapsedProviders])
+  // The panel scrolls itself (max-height + overflow), so it is the scroller;
+  // listRef goes on an inner wrapper whose top marks row zero.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtual = useVirtualRows(rows.length, MODEL_ROW_HEIGHT, { scrollRef })
+  return (
+    <div className="provider-list provider-model-list" role="tabpanel" id="provider-catalog-panel-models" aria-labelledby="provider-catalog-tab-models" ref={scrollRef}>
+      <div ref={virtual.listRef}>
+        <div aria-hidden="true" style={{ height: virtual.paddingTop }} />
+        {rows.slice(virtual.start, virtual.end).map((row) => row.kind === 'header' ? (
+          <button type="button" key={`provider-${row.provider.id}`} className={`provider-model-group__heading${row.provider.enabled ? '' : ' is-disabled'}${row.collapsed ? ' is-collapsed' : ''}`} aria-expanded={!row.collapsed} onClick={() => onToggleProvider(row.provider.id)}><strong>{row.provider.name}</strong><small>{row.enabledCount.toLocaleString()} of {row.total.toLocaleString()} on</small><ChevronRight className="provider-model-group__chevron" size={13} aria-hidden="true" /></button>
+        ) : (
+          <div className={`provider-model-row${row.model.enabled === false ? ' is-disabled' : ''}`} key={row.model.key}>
+            <div className="provider-row__identity"><strong>{row.model.name}</strong><small>{row.model.id}</small></div>
+            <div className="provider-model-row__capabilities">
+              {row.model.reasoning ? <span title={`${row.model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
+              {row.model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
+              <span className={row.model.available && row.model.enabled !== false ? 'is-available' : ''}>{row.model.enabled === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : row.model.available ? 'Available' : 'Needs credentials'}</span>
+            </div>
+            <label className="provider-row__toggle provider-model-row__toggle" title={row.model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${row.model.name} model`} checked={row.model.enabled !== false} disabled={busyProvider === `model:${row.model.key}`} onChange={(event) => void run(`model:${row.model.key}`, () => onSetModelEnabled(row.model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
+          </div>
+        ))}
+        <div aria-hidden="true" style={{ height: virtual.paddingBottom }} />
+      </div>
+    </div>
   )
 }
 

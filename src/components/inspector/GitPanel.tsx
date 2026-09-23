@@ -84,26 +84,27 @@ function BranchSection({ title, branches, onSelect }: { title: string; branches:
   )
 }
 
-function CommitDetailPane({ detail, loading, commit }: { detail: GitCommitDetail | undefined; loading: boolean; commit: GitCommitInfo | undefined }) {
-  if (!commit) return null
+function CommitDetailPane({ detail, loading, error, commit, onRetry }: { detail: GitCommitDetail | undefined; loading: boolean; error: string; commit: GitCommitInfo | undefined; onRetry(): void }) {
   return (
     <div className="git-detail">
       <div className="git-detail__header">
         <GitCommitHorizontal size={14} />
-        <strong>{commit.subject || '(no message)'}</strong>
-        <code>{commit.sha.slice(0, 10)}</code>
+        <strong>{commit?.subject || 'Commit details'}</strong>
+        <code>{(commit?.sha ?? detail?.sha ?? '').slice(0, 10)}</code>
       </div>
-      <div className="git-detail__meta">
+      {commit ? <div className="git-detail__meta">
         <span>{commit.author}{commit.email ? ` <${commit.email}>` : ''}</span>
         <span>{new Date(commit.timestamp * 1000).toLocaleString()} · {formatRelative(commit.timestamp * 1000)}</span>
         {commit.parents.length ? <span>{commit.parents.length > 1 ? 'Merge of' : 'Parent'} {commit.parents.map((parent) => parent.slice(0, 7)).join(', ')}</span> : <span>Root commit</span>}
-      </div>
-      {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={14} /> Loading commit…</div> : (
+      </div> : null}
+      {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={14} /> Loading commit…</div> : error ? (
+        <div className="git-detail__error" role="alert"><span>{error}</span><button type="button" onClick={onRetry}><RefreshCw size={12} /> Retry</button></div>
+      ) : (
         <>
-          {detail?.body && detail.body !== commit.subject ? <pre className="git-detail__body">{detail.body}</pre> : null}
+          {detail?.body && detail.body !== commit?.subject ? <pre className="git-detail__body">{detail.body}</pre> : null}
           <div className="git-detail__files scroll-area">
             {detail?.files.map((file) => <div key={file.path} className="git-detail__file"><File size={12} /><span title={file.path}>{file.path}</span><small className="additions">+{file.additions}</small><small className="deletions">−{file.deletions}</small></div>)}
-            {detail && !detail.files.length ? <p className="git-detail__empty">{commit.parents.length > 1 ? 'Merge commit — no combined diff.' : 'No file changes recorded.'}</p> : null}
+            {detail && !detail.files.length ? <p className="git-detail__empty">{commit && commit.parents.length > 1 ? 'Merge commit — no combined diff.' : 'No file changes recorded.'}</p> : null}
             {detail?.truncated ? <p className="git-detail__empty">File list truncated.</p> : null}
           </div>
         </>
@@ -119,6 +120,8 @@ export function GitPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: GitSta
   const [selectedSha, setSelectedSha] = useState<string>()
   const [detail, setDetail] = useState<GitCommitDetail>()
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const [detailRetry, setDetailRetry] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // `git` is a fresh object whenever App refreshes status (terminal events,
@@ -136,15 +139,20 @@ export function GitPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: GitSta
 
   const selectedCommit = history?.commits.find((commit) => commit.sha === selectedSha)
   useEffect(() => {
-    if (!cwd || !selectedSha || !window.prime) { setDetail(undefined); return }
+    if (!cwd || !selectedSha || !window.prime) { setDetail(undefined); setDetailError(''); return }
     let cancelled = false
     setDetailLoading(true)
+    setDetailError('')
     window.prime.git.commitDetail(cwd, selectedSha)
       .then((value) => { if (!cancelled) setDetail(value) })
-      .catch(() => { if (!cancelled) setDetail(undefined) })
+      .catch((cause) => { if (!cancelled) { setDetail(undefined); setDetailError(errorMessage(cause)) } })
       .finally(() => { if (!cancelled) setDetailLoading(false) })
     return () => { cancelled = true }
-  }, [cwd, selectedSha])
+  }, [cwd, selectedSha, detailRetry])
+
+  // A branch head can sit outside the loaded commit window; synthesize a
+  // header row from the fetched detail so the pane still renders.
+  const detailCommit = selectedCommit ?? (detail ? { sha: detail.sha, parents: detail.parents, author: detail.author, email: detail.email, timestamp: detail.timestamp, subject: detail.body.split('\n')[0] ?? '', refs: [] } : undefined)
 
   const selectBranch = useCallback((branch: GitHistoryBranch) => {
     setSelectedSha(branch.sha)
@@ -190,7 +198,7 @@ export function GitPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: GitSta
           ) : null}
         </div>
       </div>
-      {selectedCommit ? <CommitDetailPane detail={detail} loading={detailLoading} commit={selectedCommit} /> : null}
+      {selectedSha ? <CommitDetailPane detail={detail} loading={detailLoading} error={detailError} commit={detailCommit} onRetry={() => setDetailRetry((value) => value + 1)} /> : null}
     </div>
   )
 }

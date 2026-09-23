@@ -12,7 +12,8 @@
 .voice-orb__status { position: absolute; bottom: 13px; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 88%, transparent); backdrop-filter: blur(10px); font-size: 9.5px; font-weight: 620; letter-spacing: .01em; }
 .voice-orb__controls { position: absolute; z-index: 2; bottom: -14px; display: flex; gap: 9px; opacity: 0; transform: translateY(-5px); transition: opacity 150ms ease, transform 150ms ease; }
 .voice-orb:hover .voice-orb__controls, .voice-orb:focus-within .voice-orb__controls { opacity: 1; transform: translateY(0); }
-.voice-orb__controls button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: var(--surface-raised); box-shadow: 0 4px 12px color-mix(in srgb, #000 16%, transparent); }
+.voice-orb__controls button { position: relative; width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: var(--surface-raised); box-shadow: 0 4px 12px color-mix(in srgb, #000 16%, transparent); }
+.voice-orb__controls button::before { content: ''; position: absolute; inset: -7px -4px; }
 .voice-orb__controls button:hover { color: var(--text); background: var(--surface-hover); }
 .voice-orb > p { width: 210px; margin: 3px 0 0 50%; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--surface-raised); font-size: 9.5px; line-height: 1.35; transform: translateX(-50%); }
 .voice-orb__receipt { width: 210px; margin: 3px 0 0 50%; padding: 8px 10px; display: grid; gap: 2px; border: 1px solid color-mix(in srgb, var(--success) 38%, var(--border)); border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent); transform: translateX(-50%); }
@@ -26,11 +27,11 @@
 .voice-orb--agent-speaking .voice-orb__halo { opacity: .72; animation: orb-agent-halo 700ms ease-in-out infinite alternate; }
 .voice-orb--error .voice-orb__core { filter: grayscale(.45); opacity: .8; animation: none; }
 .voice-orb.is-muted .voice-orb__core { filter: saturate(.45); animation-duration: 5s; }
-@keyframes orb-breathe { 0%, 100% { transform: scale(.96) rotate(-2deg); } 50% { transform: scale(1.03) rotate(2deg); border-radius: 54% 46% 45% 55% / 46% 57% 43% 54%; } }
-@keyframes orb-halo { 50% { transform: scale(1.12) rotate(18deg); border-radius: 58% 42% 45% 55% / 42% 55% 45% 58%; } }
+@keyframes orb-breathe { 0%, 100% { transform: scale(.96) rotate(-2deg); } 50% { transform: scale(1.03) rotate(2deg); } }
+@keyframes orb-halo { 50% { transform: scale(1.12) rotate(18deg); opacity: .4; } }
 @keyframes orb-rotate { to { transform: rotate(360deg); } }
-@keyframes orb-user { from { transform: scale(.94,.99) rotate(-4deg); border-radius: 40% 60% 52% 48% / 58% 41% 59% 42%; } to { transform: scale(1.08,.96) rotate(4deg); border-radius: 59% 41% 44% 56% / 42% 58% 43% 57%; } }
-@keyframes orb-thinking { 0%, 100% { transform: rotate(-5deg) scale(.97); } 50% { transform: rotate(8deg) scale(1.03); border-radius: 58% 42% 61% 39% / 43% 62% 38% 57%; } }
-@keyframes orb-agent { from { transform: scale(.9,1.08) rotate(-8deg); border-radius: 36% 64% 43% 57% / 61% 37% 63% 39%; } to { transform: scale(1.13,.92) rotate(7deg); border-radius: 65% 35% 59% 41% / 39% 64% 36% 61%; } }
-@keyframes orb-agent-halo { to { transform: scale(1.28) rotate(24deg); filter: blur(20px); } }
+@keyframes orb-user { from { transform: scale(.94,.99) rotate(-4deg); } to { transform: scale(1.08,.96) rotate(4deg); } }
+@keyframes orb-thinking { 0%, 100% { transform: rotate(-5deg) scale(.97); } 50% { transform: rotate(8deg) scale(1.03); } }
+@keyframes orb-agent { from { transform: scale(.9,1.08) rotate(-8deg); } to { transform: scale(1.13,.92) rotate(7deg); } }
+@keyframes orb-agent-halo { to { transform: scale(1.28) rotate(24deg); opacity: .5; } }
 @media (prefers-reduced-motion: reduce) { .voice-orb *, .voice-orb *::after { animation: none !important; transition: none !important; } }

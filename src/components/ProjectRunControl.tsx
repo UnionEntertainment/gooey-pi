@@ -15,6 +15,7 @@ interface ProjectRunControlProps {
 export function ProjectRunControl({ project, activeKind, onRun, onStop, onSave }: ProjectRunControlProps) {
   const menuId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
   const runInputRef = useRef<HTMLTextAreaElement>(null)
   const [open, setOpen] = useState(false)
   const [setup, setSetup] = useState(project.scripts?.setup ?? '')
@@ -29,14 +30,26 @@ export function ProjectRunControl({ project, activeKind, onRun, onStop, onSave }
     setError('')
     setOpen(false)
   }, [project.id, project.scripts?.run, project.scripts?.setup])
+  const setupInputRef = useRef<HTMLTextAreaElement>(null)
+  // Opening moves focus into the dialog's first field unless the opener already
+  // placed it (runPrimary focuses the run field via requestAnimationFrame).
+  useEffect(() => {
+    if (!open) return
+    const menu = rootRef.current?.querySelector<HTMLElement>('.project-run-menu')
+    if (menu && !menu.contains(document.activeElement)) setupInputRef.current?.focus()
+  }, [open])
+  const closeMenu = (restoreFocus = true) => {
+    setOpen(false)
+    if (restoreFocus) menuTriggerRef.current?.focus()
+  }
 
   useEffect(() => {
     if (!open) return
     const dismiss = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!rootRef.current?.contains(event.target as Node)) closeMenu(false)
     }
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
+      if (event.key === 'Escape') { event.preventDefault(); closeMenu() }
     }
     document.addEventListener('pointerdown', dismiss, true)
     document.addEventListener('keydown', dismissOnEscape, true)
@@ -69,7 +82,7 @@ export function ProjectRunControl({ project, activeKind, onRun, onStop, onSave }
     setError('')
     try {
       await onSave({ setup, run })
-      setOpen(false)
+      closeMenu()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save project scripts')
     } finally {
@@ -93,7 +106,7 @@ export function ProjectRunControl({ project, activeKind, onRun, onStop, onSave }
         <button type="button" title={running ? (activeKind === 'setup' ? 'Stop setup' : 'Stop project') : 'Run project'} className="project-run-split__primary" aria-label={running ? `Stop ${activeKind} script` : 'Run project'} onClick={runPrimary}>
           {running ? <Square size={11} fill="currentColor" /> : <Play size={15} />}
         </button>
-        <button type="button" title="Configure project scripts" className="project-run-split__menu" aria-label="Configure project scripts" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => setOpen((value) => !value)}>
+        <button ref={menuTriggerRef} type="button" title="Configure project scripts" className="project-run-split__menu" aria-label="Configure project scripts" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => setOpen((value) => !value)}>
           <ChevronDown size={13} />
         </button>
       </div>
@@ -102,7 +115,7 @@ export function ProjectRunControl({ project, activeKind, onRun, onStop, onSave }
           <header><strong>Project scripts</strong><small>{project.name}</small></header>
           <label htmlFor={`${menuId}-setup`}>
             <span>Setup command</span>
-            <textarea id={`${menuId}-setup`} className="mono" rows={2} value={setup} placeholder="npm install" spellCheck={false} onChange={(event) => setSetup(event.target.value)} />
+            <textarea ref={setupInputRef} id={`${menuId}-setup`} className="mono" rows={2} value={setup} placeholder="npm install" spellCheck={false} onChange={(event) => setSetup(event.target.value)} />
             <small>Runs once when first configured, and again whenever this command changes.</small>
           </label>
           {setupStatus}

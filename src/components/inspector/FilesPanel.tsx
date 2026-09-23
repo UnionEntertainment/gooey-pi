@@ -9,11 +9,14 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { basename } from '@/lib/data'
 import { errorMessage } from '@/lib/errors'
 import type { GitStatus, ProjectFileEntry, ProjectRecord } from '@/types/api'
+import { useVirtualRows } from '@/hooks/useVirtualRows'
 import { EmptyState, IconButton } from '../ui'
+
+const TREE_ROW_HEIGHT = 32
 
 export interface FileTreeNode {
   id: string
@@ -225,8 +228,10 @@ export function FilesPanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [skipped, setSkipped] = useState(0)
-  const [visibleLimit, setVisibleLimit] = useState(1_000)
+  const [activeId, setActiveId] = useState<string>()
+  const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(null)
   const loadToken = useRef(0)
+  const treeScrollerRef = useRef<HTMLDivElement>(null)
 
   const load = async () => {
     const token = ++loadToken.current
@@ -234,7 +239,6 @@ export function FilesPanel({
     setExpandedIds(new Set())
     setError('')
     setSkipped(0)
-    setVisibleLimit(1_000)
     if (!project || !window.prime) return
     setLoading(true)
     try {
@@ -274,20 +278,72 @@ export function FilesPanel({
     () => flattenVisibleTree(filteredTree, expandedIds, isSearching),
     [filteredTree, expandedIds, isSearching],
   )
-  const displayedNodes = visibleNodes.slice(0, visibleLimit)
+  const { listRef: treeListRef, start: rowStart, end: rowEnd, paddingTop, paddingBottom } = useVirtualRows(visibleNodes.length, TREE_ROW_HEIGHT, { scrollRef: treeScrollerRef })
+  const displayedNodes = visibleNodes.slice(rowStart, rowEnd)
+  const tabbableId = activeId !== undefined && visibleNodes.some((node) => node.id === activeId) ? activeId : visibleNodes[0]?.id
+
+  useLayoutEffect(() => {
+    if (pendingFocusIndex === null) return
+    const row = treeListRef.current?.querySelector<HTMLElement>(`[data-tree-index="${pendingFocusIndex}"]`)
+    if (!row) return
+    setPendingFocusIndex(null)
+    row.focus()
+  })
 
   const allDirIds = useMemo(() => collectDirectoryIds(treeRoots), [treeRoots])
 
-  const toggleExpand = (id: string) => {
+  const setExpanded = (id: string, expanded: boolean) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
+      if (expanded) next.add(id)
+      else next.delete(id)
       return next
     })
+  }
+
+  const focusTreeIndex = (index: number) => {
+    const list = treeListRef.current
+    const scroller = treeScrollerRef.current
+    if (!list || !scroller || !visibleNodes[index]) return
+    const listTop = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+    const rowTop = listTop + index * TREE_ROW_HEIGHT
+    if (rowTop < scroller.scrollTop) scroller.scrollTop = rowTop
+    else if (rowTop + TREE_ROW_HEIGHT > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = rowTop + TREE_ROW_HEIGHT - scroller.clientHeight
+    setPendingFocusIndex(index)
+  }
+
+  const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('[data-tree-index]')
+    if (!row) return
+    const index = Number(row.dataset.treeIndex)
+    const node = visibleNodes[index]
+    if (!node) return
+    const isDirectory = node.type === 'directory'
+    const isExpanded = isSearching || expandedIds.has(node.id)
+    const move = (next: number) => {
+      event.preventDefault()
+      focusTreeIndex(Math.max(0, Math.min(visibleNodes.length - 1, next)))
+    }
+    if (event.key === 'ArrowDown') move(index + 1)
+    else if (event.key === 'ArrowUp') move(index - 1)
+    else if (event.key === 'Home') move(0)
+    else if (event.key === 'End') move(visibleNodes.length - 1)
+    else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      if (isDirectory && node.children.length && !isExpanded) setExpanded(node.id, true)
+      else if (isDirectory && node.children.length) move(index + 1)
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      if (isDirectory && isExpanded && !isSearching) setExpanded(node.id, false)
+      else {
+        for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+          if (visibleNodes[cursor].depth < node.depth) { move(cursor); break }
+        }
+      }
+    } else if (event.key === 'Enter' && event.shiftKey) {
+      event.preventDefault()
+      onReveal(node.fullPath)
+    }
   }
 
   const collapseAll = () => {
@@ -331,7 +387,7 @@ export function FilesPanel({
         </IconButton>
       </div>
 
-      <div className="file-tree scroll-area">
+      <div className="file-tree scroll-area" ref={treeScrollerRef}>
         <button
           type="button"
           className="tree-root"
@@ -355,23 +411,45 @@ export function FilesPanel({
           </p>
         ) : null}
 
-        {!loading && !error
-          ? displayedNodes.map((node) => {
+        {!loading && !error ? (
+          <div className="file-tree__nodes" role="tree" aria-label="Project files" ref={treeListRef} onKeyDown={onTreeKeyDown} style={{ paddingTop, paddingBottom }}>
+            {displayedNodes.map((node, offset) => {
+              const index = rowStart + offset
               const isDirectory = node.type === 'directory'
               const isExpanded = isSearching || expandedIds.has(node.id)
               const status =
                 node.root === project.primaryFolder ? changed.get(node.path) : undefined
+              const statusBadge = status ? (
+                <small
+                  className={`file-tree__status ${
+                    status === 'M'
+                      ? 'file-tree__status--modified'
+                      : status === 'A'
+                        ? 'file-tree__status--added'
+                        : status === 'D'
+                          ? 'file-tree__status--deleted'
+                          : ''
+                  }`}
+                >
+                  {status}
+                </small>
+              ) : null
 
               if (isDirectory) {
                 return (
                   <button
                     type="button"
                     key={node.id}
+                    role="treeitem"
+                    aria-level={node.depth + 1}
+                    aria-expanded={node.children.length ? isExpanded : undefined}
+                    tabIndex={node.id === tabbableId ? 0 : -1}
+                    data-tree-index={index}
                     className="file-tree__item is-directory"
                     style={{ paddingLeft: `${8 + node.depth * 14}px` }}
-                    title={node.path || node.name}
-                    aria-expanded={isExpanded}
-                    onClick={isSearching ? undefined : () => toggleExpand(node.id)}
+                    title={isSearching ? `${node.path || node.name} — Enter reveals` : `${node.path || node.name} — Shift+Enter reveals`}
+                    onFocus={() => setActiveId(node.id)}
+                    onClick={isSearching ? () => onReveal(node.fullPath) : () => setExpanded(node.id, !isExpanded)}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
                       onReveal(node.fullPath)
@@ -388,21 +466,7 @@ export function FilesPanel({
                       {isExpanded ? <FolderOpen size={13} /> : <Folder size={13} />}
                     </span>
                     <span className="file-tree__name">{node.name}</span>
-                    {status ? (
-                      <small
-                        className={`file-tree__status ${
-                          status === 'M'
-                            ? 'file-tree__status--modified'
-                            : status === 'A'
-                              ? 'file-tree__status--added'
-                              : status === 'D'
-                                ? 'file-tree__status--deleted'
-                                : ''
-                        }`}
-                      >
-                        {status}
-                      </small>
-                    ) : null}
+                    {statusBadge}
                   </button>
                 )
               }
@@ -411,45 +475,26 @@ export function FilesPanel({
                 <button
                   type="button"
                   key={node.id}
+                  role="treeitem"
+                  aria-level={node.depth + 1}
+                  tabIndex={node.id === tabbableId ? 0 : -1}
+                  data-tree-index={index}
                   className="file-tree__item is-file"
                   style={{ paddingLeft: `${8 + node.depth * 14}px` }}
                   title={node.path}
+                  onFocus={() => setActiveId(node.id)}
                   onClick={() => onReveal(node.fullPath)}
                 >
                   <span className="file-tree__expander-placeholder" />
                   <span className="file-tree__icon">{getFileIcon(node.name)}</span>
                   <span className="file-tree__name">{node.name}</span>
-                  {status ? (
-                    <small
-                      className={`file-tree__status ${
-                        status === 'M'
-                          ? 'file-tree__status--modified'
-                          : status === 'A'
-                            ? 'file-tree__status--added'
-                            : status === 'D'
-                              ? 'file-tree__status--deleted'
-                              : ''
-                      }`}
-                    >
-                      {status}
-                    </small>
-                  ) : null}
+                  {statusBadge}
                 </button>
               )
-            })
-          : null}
-
-        {!loading && !error && visibleNodes.length > displayedNodes.length ? (
-          <button
-            type="button"
-            className="file-tree__show-more"
-            onClick={() =>
-              setVisibleLimit((limit) => Math.min(visibleNodes.length, limit + 1_000))
-            }
-          >
-            Show {Math.min(1_000, visibleNodes.length - displayedNodes.length)} more paths
-          </button>
+            })}
+          </div>
         ) : null}
+
 
         {!loading && !error && treeRoots.length > 0 && visibleNodes.length === 0 ? (
           <p>{query.trim() ? `No files match “${query}”.` : 'No project files found.'}</p>

@@ -4,7 +4,7 @@ import type { HarnessId, PrimeModelDescriptor, RuntimeInfo, SessionRecord, Trans
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
 import { streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import type { AgentRpcManager } from '../agent-rpc'
-import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
+import { CapabilityBridge, type CapabilityClaim, type CapabilityScope } from '../lib/capability-bridge'
 import type { ModelCatalogProvider } from '../model-catalog'
 import { availableModels, rankedModelMatches, resolveModel, resolveReasoning } from '../model-selection'
 import { requireBoolean, requireId, requireInteger, requireString } from '../validation'
@@ -61,6 +61,8 @@ export interface AgentCollaborationBridgeOptions {
   catalogs: Record<HarnessId, ModelCatalogProvider>
   disabledProviders: Record<HarnessId, () => ReadonlySet<string>>
   disabledModels: Record<HarnessId, () => ReadonlySet<string>>
+  /** App-managed workspace for project-less sessions; runtimes rooted there see every session in their harness. */
+  globalWorkspaceDir?: string
   waitClock?: CollaborationWaitClock
 }
 
@@ -162,6 +164,18 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     this.waitClock = options.waitClock ?? nativeWaitClock
   }
 
+  private isGlobalScope(cwd: string | undefined): boolean {
+    return Boolean(cwd && this.options.globalWorkspaceDir && resolve(cwd) === resolve(this.options.globalWorkspaceDir))
+  }
+
+  environmentFor(scope: CapabilityScope): NodeJS.ProcessEnv {
+    const environment = super.environmentFor(scope)
+    if (Object.keys(environment).length && this.isGlobalScope(scope.cwd)) {
+      environment.GOOEYPI_COLLABORATION_SCOPE = 'global'
+    }
+    return environment
+  }
+
   protected environmentEntries(url: string, token: string): NodeJS.ProcessEnv {
     return {
       GOOEYPI_COLLABORATION_URL: url,
@@ -238,11 +252,14 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     // to another harness's session catalog even when the cwd text matches.
     const harness = source.session.harness
     const service = this.options.sessions[harness]
-    const sessions = await service.list(source.session.projectPath, false, true)
+    // Sessions running in GooeyPi's own workspace are not bound to a project:
+    // their peer set is every session in the harness instead of one directory.
+    const global = this.isGlobalScope(source.session.projectPath)
+    const sessions = await service.list(global ? undefined : source.session.projectPath, false, true)
     for (const session of sessions) {
       if (session.id === source.session.id) continue
       if (session.depth !== 0) continue
-      if (resolve(session.projectPath) !== resolve(source.session.projectPath)) continue
+      if (!global && resolve(session.projectPath) !== resolve(source.session.projectPath)) continue
       peers.push({ session, service, manager: this.options.agents[harness] })
     }
     return peers.sort((left, right) => Date.parse(right.session.updatedAt) - Date.parse(left.session.updatedAt))
@@ -353,10 +370,11 @@ export class AgentCollaborationBridge extends CapabilityBridge {
 
   private async targetFor(source: CollaborationTarget, targetId: string): Promise<CollaborationTarget> {
     const matches = (await this.peersFor(source)).filter(({ session }) => session.id === targetId)
-    if (matches.length === 0) throw new Error('The target session was not found in this working directory')
+    if (matches.length === 0) throw new Error(this.isGlobalScope(source.session.projectPath) ? 'The target session was not found' : 'The target session was not found in this working directory')
     if (matches.length > 1) throw new Error('The target session id is ambiguous in this catalog')
     return matches[0]
   }
+
 
   private async snapshot(target: CollaborationTarget): Promise<CollaborationSnapshot> {
     const context = boundedMessages(await target.service.read(target.session.filePath))

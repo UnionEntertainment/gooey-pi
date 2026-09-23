@@ -67,7 +67,7 @@ describe('PluginsPage bundled capability controls', () => {
 
   it('enables Browser directly and confirms before disabling it', async () => {
     const setBrowserEnabled = vi.fn(async () => undefined)
-    const browser: SkillRecord = { id: 'prime-work-browser', name: 'Browser', description: 'In-app browser.', kind: 'skill', location: 'system', enabled: false }
+    const browser: SkillRecord = { id: 'ego-browser', name: 'Browser | Ego Lite', description: 'Ego lite browser.', kind: 'skill', location: 'system', enabled: false }
     const render = async (enabled: boolean) => act(async () => {
       root.render(<PluginsPage
         harness="prime" skills={[browser]} warnings={[]} loading={false}
@@ -80,14 +80,14 @@ describe('PluginsPage bundled capability controls', () => {
       />)
     })
     await render(false)
-    const enableBrowser = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Browser"]')!
+    const enableBrowser = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Browser | Ego Lite"]')!
     expect(enableBrowser.querySelector('.plugin-toggle__plus')).not.toBeNull()
     expect(enableBrowser.querySelector('.plugin-toggle__disable')).toBeNull()
     await act(async () => { enableBrowser.click(); await Promise.resolve() })
     expect(setBrowserEnabled).toHaveBeenCalledWith(true)
 
     await render(true)
-    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable Browser"]')!.click() })
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable Browser | Ego Lite"]')!.click() })
     expect(setBrowserEnabled).not.toHaveBeenCalledWith(false)
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve() })

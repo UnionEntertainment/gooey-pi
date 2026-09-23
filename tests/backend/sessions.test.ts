@@ -1261,6 +1261,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     expect((await service.list())[0]?.archived).toBe(false)
   })
 
+  it('emits a change event after archive and pin commits', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'events.jsonl')
+    writeSession(file, project, 'events')
+    const safePath = await service.requireSessionPath(file)
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+    try {
+      await expect(service.archive(file)).resolves.toBe(true)
+      await expect(service.archive(file, false)).resolves.toBe(true)
+      await expect(service.setPinned(file)).resolves.toBe(true)
+      expect(events.map((event) => event.filePath)).toEqual([safePath, safePath, safePath])
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('persists pinned sessions across service instances', async () => {
     const { root, project, service, dir } = setup()
     const file = join(root, 'pinned.jsonl')

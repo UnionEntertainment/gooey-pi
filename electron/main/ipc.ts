@@ -13,10 +13,10 @@ import type { SettingsService } from './settings-schedules'
 import type { AutomationService } from './schedules/service'
 import type { HeartbeatService } from './schedules/heartbeats'
 import type { SessionService } from './sessions'
+import type { AgentTerminalBridge } from './terminal-bridge'
 import type { TerminalService } from './terminal'
 import type { VoiceService } from './voice'
 import type { UpdateService } from './updates'
-import type { AgentBrowserService } from './browser/agent-service'
 import type { SupabaseAuthService } from './supabase-auth'
 import { requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
 
@@ -30,6 +30,7 @@ interface Services {
   sessions: SessionService
   agents: AgentRpcManager
   terminals: TerminalService
+  agentTerminal: AgentTerminalBridge
   git: GitService
   plugins: PluginService
   providers: PrimeProviderService
@@ -38,7 +39,6 @@ interface Services {
   cuaDriver: CuaDriverService
   heartbeats: HeartbeatService
   schedules: AutomationService
-  browser: AgentBrowserService
   voice: VoiceService
   pets: PetService
   supabaseAuth: SupabaseAuthService
@@ -93,6 +93,28 @@ export function isTrustedRendererUrl(url: string, expectedRendererUrl: string): 
   } catch { return false }
 }
 
+/**
+ * Sends a channel to a live, trusted renderer frame. `contents.getURL()`,
+ * `contents.mainFrame`, and `contents.send()` all throw once the main frame is
+ * disposed — a GPU crash can tear it down while the webContents still reports
+ * !isDestroyed(). These callers run inside event emitters where that throw
+ * becomes a fatal uncaughtException, so the check and the send stay in one try.
+ */
+export function sendToTrustedRenderer(
+  contents: WebContents | null | undefined,
+  expectedRendererUrl: string,
+  channel: string,
+  payload: unknown,
+): boolean {
+  if (!contents || contents.isDestroyed()) return false
+  try {
+    if (!isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
+      || !isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) return false
+    contents.send(channel, payload)
+    return true
+  } catch { return false }
+}
+
 export interface IpcRegistration {
   authorize(webContents: WebContents): void
   revoke(webContentsId: number): void
@@ -121,9 +143,12 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const whenRendererReady = new Promise<void>((resolve) => { announceRendererReady = resolve })
 
   const verify = (event: IpcEvent): void => {
-    const trustedFrame = event.senderFrame === event.sender.mainFrame
-      && isTrustedRendererUrl(event.senderFrame.url, expectedRendererUrl)
-      && isTrustedRendererUrl(event.sender.getURL(), expectedRendererUrl)
+    let trustedFrame = false
+    try {
+      trustedFrame = event.senderFrame === event.sender.mainFrame
+        && isTrustedRendererUrl(event.senderFrame.url, expectedRendererUrl)
+        && isTrustedRendererUrl(event.sender.getURL(), expectedRendererUrl)
+    } catch { /* A disposed sender frame is never trusted. */ }
     if (closed || !authorized.has(event.sender.id) || event.sender.isDestroyed() || !trustedFrame) throw new Error('IPC sender is not authorized')
   }
   const handle = (channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>): void => {
@@ -262,10 +287,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('sessions:archive', async (_event, filePath, archived) => {
     const routed = await sessionsForPath(filePath)
     const result = await routed.service.archive(filePath, archived)
-    if (archived === true) {
-      services.browser.closeForSession(filePath)
-      await services.terminals.killForSession(filePath)
-    }
+    if (archived === true) await services.terminals.killForSession(filePath)
     return result
   })
 
@@ -389,6 +411,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   on('terminal:input', (event, terminalId, data) => services.terminals.input(event.sender, terminalId, data))
   on('terminal:resize', (event, terminalId, cols, rows) => services.terminals.resize(event.sender, terminalId, cols, rows))
   on('terminal:set-active-context', (event, terminalId, context) => services.terminals.setActiveContext(event.sender, terminalId, context))
+  on('terminal:agent-result', (_event, requestId, result) => services.agentTerminal.resolveRequest(requestId, result))
   on('terminal:clear-active-context', (event, terminalId) => services.terminals.clearActiveContext(event.sender, terminalId))
   handle('terminal:kill', (event, terminalId) => services.terminals.kill(event.sender, terminalId))
 
@@ -434,14 +457,6 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     return settings
   })
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())
-
-  handle('browser:state', () => services.browser.state())
-  handle('browser:attach-tab', (_event, tabId, webContentsId) => services.browser.attachTab(tabId, webContentsId))
-  handle('browser:select-tab', (_event, tabId) => services.browser.selectTab(tabId))
-  handle('browser:close-tab', (_event, tabId) => services.browser.closeTab(tabId))
-  handle('browser:set-preview-context', (_event, webContentsId, sessionFile) => services.browser.setPreviewContext(webContentsId, sessionFile))
-  handle('browser:navigate-tab', (_event, tabId, action, url) => services.browser.navigateTab(tabId, action, url))
-
   handle('heartbeats:list', () => services.heartbeats.list())
   handle('heartbeats:manage', (_event, id, action) => services.heartbeats.manage(id, action))
 
@@ -458,8 +473,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const forwardSessionChange = (change: SessionChangeEvent): void => {
     for (const [id, contents] of authorized) {
       if (contents.isDestroyed()) { authorized.delete(id); continue }
-      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
-        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('sessions:changed', change)
+      sendToTrustedRenderer(contents, expectedRendererUrl, 'sessions:changed', change)
     }
   }
   const unsubscribeSessionChanges = services.sessions.onDidChange(forwardSessionChange)
@@ -468,35 +482,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const scheduleSubscription = services.schedules.onDidChange((change) => {
     for (const [id, contents] of authorized) {
       if (contents.isDestroyed()) { authorized.delete(id); continue }
-      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
-        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('schedules:changed', change)
+      sendToTrustedRenderer(contents, expectedRendererUrl, 'schedules:changed', change)
     }
   })
   const unsubscribeScheduleChanges = typeof scheduleSubscription === 'function' ? scheduleSubscription : () => undefined
-  const browserSubscription = services.browser.onDidChange((state) => {
-    for (const [id, contents] of authorized) {
-      if (contents.isDestroyed()) { authorized.delete(id); continue }
-      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
-        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:changed', state)
-    }
-  })
-  const unsubscribeBrowserChanges = typeof browserSubscription === 'function' ? browserSubscription : () => undefined
-  const pointerSubscription = services.browser.onPointer((event) => {
-    for (const [id, contents] of authorized) {
-      if (contents.isDestroyed()) { authorized.delete(id); continue }
-      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
-        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:pointer', event)
-    }
-  })
-  const unsubscribeBrowserPointer = typeof pointerSubscription === 'function' ? pointerSubscription : () => undefined
-  const activitySubscription = services.browser.onActivity((event) => {
-    for (const [id, contents] of authorized) {
-      if (contents.isDestroyed()) { authorized.delete(id); continue }
-      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
-        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:activity', event)
-    }
-  })
-  const unsubscribeBrowserActivity = typeof activitySubscription === 'function' ? activitySubscription : () => undefined
 
   const registration: IpcRegistration = {
     whenRendererReady,
@@ -511,9 +500,6 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       unsubscribeOmpSessionChanges()
       unsubscribePiSessionChanges()
       if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
-      if (typeof unsubscribeBrowserChanges === 'function') unsubscribeBrowserChanges()
-      if (typeof unsubscribeBrowserPointer === 'function') unsubscribeBrowserPointer()
-      if (typeof unsubscribeBrowserActivity === 'function') unsubscribeBrowserActivity()
       for (const channel of invokeChannels) ipcMain.removeHandler(channel)
       // Event listeners are removed wholesale only for our private fixed channels.
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)

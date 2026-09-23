@@ -83,12 +83,6 @@ const INVOKE_CASES: Array<[domain: string, method: string, channel: string, args
   ['settings', 'get', 'settings:get', []],
   ['settings', 'update', 'settings:update', [{ theme: 'dark' }]],
   ['settings', 'resetBrowserData', 'settings:reset-browser-data', []],
-  ['browser', 'state', 'browser:state', []],
-  ['browser', 'attachTab', 'browser:attach-tab', ['tab', 7]],
-  ['browser', 'selectTab', 'browser:select-tab', ['tab']],
-  ['browser', 'closeTab', 'browser:close-tab', ['tab']],
-  ['browser', 'setPreviewContext', 'browser:set-preview-context', [7, '/session.jsonl']],
-  ['browser', 'navigateTab', 'browser:navigate-tab', ['tab', 'navigate', 'https://example.com']],
   ['heartbeats', 'list', 'heartbeats:list', []],
   ['heartbeats', 'manage', 'heartbeats:manage', ['heartbeat', 'pause']],
   ['schedules', 'list', 'schedules:list', ['omp']],
@@ -109,9 +103,6 @@ const SUBSCRIPTION_CASES: Array<[domain: string, method: string, channel: string
   ['providers', 'onAuthEvent', 'providers:auth-event'],
   ['terminal', 'onData', 'terminal:data'],
   ['terminal', 'onExit', 'terminal:exit'],
-  ['browser', 'onChanged', 'browser:changed'],
-  ['browser', 'onPointer', 'browser:pointer'],
-  ['browser', 'onActivity', 'browser:activity'],
   ['schedules', 'onChanged', 'schedules:changed'],
 ]
 

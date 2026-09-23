@@ -1,12 +1,10 @@
-import { ArrowLeft, ArrowRight, Bot, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
 import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
 import { detectRendererPlatform, shortcutLabel } from '@/lib/platform-shortcuts'
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
-import type { StampedPointerEvent } from '@/hooks/useAgentBrowserTabs'
-import { AgentCursorOverlay, type AgentSlotRect } from '../AgentBrowserLayer'
-import { BROWSER_PARTITION, type AgentBrowserTabRecord, type BrowserAnnotationElement } from '@/types/api'
+import { BROWSER_PARTITION, type BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
 
 type WebviewElement = HTMLElement & {
@@ -54,37 +52,11 @@ interface BrowserPanelProps {
   home: string
   onOpenExternal(url: string): void
   annotations: BrowserAnnotationsApi
-  /** Agent-controlled tabs for the active session; empty hides the tab strip entirely. */
-  agentTabs?: AgentBrowserTabRecord[]
-  activeAgentTabId?: string | null
-  previewSelected?: boolean
-  onSelectAgentTab?(tabId: string): void
-  onCloseAgentTab?(tabId: string): void
-  onShowPreview?(): void
-  /** Reports the rectangle the always-mounted AgentBrowserLayer should cover, or null when hidden. */
-  onAgentSlotRect?(rect: AgentSlotRect | null): void
-  /** Session key of the active thread, so the agent can adopt the Preview webview as its "preview" tab. */
-  agentSessionKey?: string
-  /** Reports the Preview webview identity and owning session to the main process (null on teardown). */
-  onPreviewContext?(webContentsId: number | null, sessionFile: string | null): void
-  /** Latest agent pointer movement targeting the "preview" tab, for the cursor overlay. */
-  previewPointerEvent?: StampedPointerEvent | null
-  /** User navigation on an agent tab; routed through the main process to the guest. */
-  onNavigateAgentTab?(tabId: string, action: 'back' | 'forward' | 'reload' | 'url', url?: string): void
   /** Test hook: how often to poll the page for a clicked element while picking. */
   pollIntervalMs?: number
 }
 
-function agentTabLabel(tab: AgentBrowserTabRecord): string {
-  if (tab.title) return tab.title
-  try {
-    const host = new URL(tab.url).hostname
-    if (host) return host
-  } catch { /* about:blank and friends */ }
-  return 'New tab'
-}
-
-export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandled, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, onNavigateAgentTab, pollIntervalMs = 350, platform = detectRendererPlatform() }: BrowserPanelProps) {
+export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandled, onOpenExternal, annotations, pollIntervalMs = 350, platform = detectRendererPlatform() }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
@@ -102,73 +74,10 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
   annotationsRef.current = annotations
   const noticeTimerRef = useRef<number | null>(null)
   const lastMarkersRef = useRef('')
-  const activeAgentTab = agentTabs.find((tab) => tab.tabId === activeAgentTabId) ?? null
-  const showAgentTab = !previewSelected && activeAgentTab !== null
-  const slotRef = useRef<HTMLDivElement | null>(null)
-  const onAgentSlotRectRef = useRef(onAgentSlotRect)
-  onAgentSlotRectRef.current = onAgentSlotRect
-  const lastAgentSlotRectRef = useRef<AgentSlotRect | null | undefined>(undefined)
-  const [previewWebContentsId, setPreviewWebContentsId] = useState<number | null>(null)
-  const onPreviewContextRef = useRef(onPreviewContext)
-  onPreviewContextRef.current = onPreviewContext
-  const [agentAddress, setAgentAddress] = useState('')
-  const agentAddressEditingRef = useRef(false)
-
-  // Keep the agent tab's address field following the page unless the user is
-  // actively editing it.
-  useEffect(() => {
-    if (!agentAddressEditingRef.current) setAgentAddress(activeAgentTab?.url ?? '')
-  }, [activeAgentTab?.url, activeAgentTabId])
-
-  // Bind the Preview guest to the active thread so its agent can adopt it as
-  // the "preview" tab; clear the binding when the panel goes away.
-  useEffect(() => {
-    if (previewWebContentsId === null || !agentSessionKey) return
-    onPreviewContextRef.current?.(previewWebContentsId, agentSessionKey)
-  }, [previewWebContentsId, agentSessionKey])
-  useEffect(() => () => { onPreviewContextRef.current?.(null, null) }, [])
-
-  // The agent webviews live in the always-mounted AgentBrowserLayer, not in
-  // this panel; report where the layer should overlay while an agent tab is
-  // shown. Position can shift without a resize (sidebar toggle), so a slow
-  // poll backs up the observer.
-  useEffect(() => {
-    const publish = (next: AgentSlotRect | null) => {
-      const previous = lastAgentSlotRectRef.current
-      const unchanged = next === null
-        ? previous === null
-        : previous !== null
-          && previous !== undefined
-          && previous.left === next.left
-          && previous.top === next.top
-          && previous.width === next.width
-          && previous.height === next.height
-      if (unchanged) return
-      lastAgentSlotRectRef.current = next
-      onAgentSlotRectRef.current?.(next)
-    }
-    if (!showAgentTab) {
-      publish(null)
-      return
-    }
-    const report = () => {
-      const slot = slotRef.current
-      if (!slot) return
-      const rect = slot.getBoundingClientRect()
-      publish({ left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) })
-    }
-    report()
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(report)
-    if (observer && slotRef.current) observer.observe(slotRef.current)
-    window.addEventListener('resize', report)
-    const interval = window.setInterval(report, 400)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', report)
-      window.clearInterval(interval)
-      publish(null)
-    }
-  }, [showAgentTab])
+  const historyButtonRef = useRef<HTMLButtonElement>(null)
+  const annotateButtonRef = useRef<HTMLButtonElement>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
+  const annotationTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const showNotice = (text: string) => {
     setNotice(text)
@@ -224,7 +133,6 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
     const onDomReady = () => {
       setDomReady(true)
       lastMarkersRef.current = ''
-      try { setPreviewWebContentsId(view.getWebContentsId()) } catch { /* guest not attached yet */ }
     }
     view.addEventListener('dom-ready', onDomReady)
     view.addEventListener('did-start-loading', didStart)
@@ -302,14 +210,53 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
     onNavigationRequestHandled?.(navigationRequest.id)
   }, [domReady, navigate, navigationRequest, onNavigationRequestHandled])
 
+  const closeHistory = (restoreFocus = true) => {
+    setHistoryOpen(false)
+    if (restoreFocus) historyButtonRef.current?.focus()
+  }
+
+  const discardAnnotation = (restoreFocus = true) => {
+    setPendingElement(null)
+    setAnnotationText('')
+    if (restoreFocus) annotateButtonRef.current?.focus()
+  }
+
+  // Dismiss the innermost overlay first. Listening on window capture runs
+  // before the inspector's own document-level Escape handler, so an overlay
+  // never closes the whole panel.
+  useEffect(() => {
+    if (!historyOpen && !pendingElement && !picking) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (event.target instanceof HTMLElement && event.target.closest('.modal-backdrop')) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (historyOpen) closeHistory()
+      else if (pendingElement) discardAnnotation()
+      else setPicking(false)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [historyOpen, pendingElement, picking])
+
+  useEffect(() => {
+    if (!historyOpen) return
+    const popover = historyRef.current
+    const first = popover?.querySelector<HTMLElement>('.browser-history__entry') ?? popover?.querySelector<HTMLElement>('button')
+    first?.focus()
+  }, [historyOpen])
+
+  useEffect(() => {
+    if (pendingElement) annotationTextareaRef.current?.focus()
+  }, [pendingElement])
+
   const toggleAnnotation = () => {
     if (picking) {
       setPicking(false)
       return
     }
     if (pendingElement) {
-      setPendingElement(null)
-      setAnnotationText('')
+      discardAnnotation()
       return
     }
     if (annotationsRef.current.atCapacity) {
@@ -320,7 +267,7 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
     setPicking(true)
   }
 
-  const saveAnnotation = () => {
+  const saveAnnotation = (refocus = true) => {
     const view = webviewRef.current
     if (!pendingElement || !annotationText.trim()) return
     let pageTitle = ''
@@ -337,6 +284,7 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
     }
     setPendingElement(null)
     setAnnotationText('')
+    if (refocus) annotateButtonRef.current?.focus()
   }
 
   const webview = createElement('webview' as never, {
@@ -354,43 +302,7 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
 
   return (
     <div className="browser-panel">
-      {agentTabs.length ? (
-        <div className="browser-tabstrip" role="tablist" aria-label="Browser tabs">
-          <button type="button" role="tab" aria-selected={!showAgentTab} className={showAgentTab ? '' : 'is-active'} onClick={() => onShowPreview?.()}>
-            Preview
-          </button>
-          {agentTabs.map((tab) => (
-            <div
-              key={tab.tabId}
-              role="tab"
-              tabIndex={0}
-              aria-selected={showAgentTab && tab.tabId === activeAgentTabId}
-              className={`browser-tabstrip__agent ${showAgentTab && tab.tabId === activeAgentTabId ? 'is-active' : ''}`}
-              title={tab.url}
-              onClick={() => onSelectAgentTab?.(tab.tabId)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                onSelectAgentTab?.(tab.tabId)
-              }}
-            >
-              <Bot size={11} aria-hidden />
-              <span>{agentTabLabel(tab)}</span>
-              <button
-                type="button"
-                aria-label={`Close agent tab ${agentTabLabel(tab)}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onCloseAgentTab?.(tab.tabId)
-                }}
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <div className={`browser-preview ${showAgentTab ? 'browser-preview--hidden' : ''}`} inert={showAgentTab ? true : undefined}>
+      <div className="browser-preview">
       <div className="browser-toolbar">
         <IconButton label="Back" disabled={!canBack} onClick={() => webviewRef.current?.goBack()}>
           <ArrowLeft size={14} />
@@ -410,11 +322,11 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
         >
           <ShieldCheck size={12} />
           <input value={address} onChange={(event) => setAddress(event.target.value)} aria-label="Browser address" spellCheck={false} />
-          <button type="button" aria-label="Browser history" onClick={() => setHistoryOpen((value) => !value)}>
+          <button type="button" ref={historyButtonRef} aria-label="Browser history" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={() => (historyOpen ? closeHistory() : setHistoryOpen(true))}>
             <History size={13} />
           </button>
         </form>
-        <IconButton className={picking || pendingElement ? 'is-active annotation-active' : ''} label={picking ? 'Stop annotating' : 'Annotate page'} aria-pressed={picking} onClick={toggleAnnotation}>
+        <IconButton ref={annotateButtonRef} className={picking || pendingElement ? 'is-active annotation-active' : ''} label={picking ? 'Stop annotating' : 'Annotate page'} aria-pressed={picking} onClick={toggleAnnotation}>
           <MessageCirclePlus size={15} />
         </IconButton>
         <IconButton label="Open in default browser" onClick={() => onOpenExternal(currentUrl)}>
@@ -422,7 +334,7 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
         </IconButton>
       </div>
       {historyOpen ? (
-        <div className="browser-history">
+        <div className="browser-history" role="dialog" aria-label="Recent pages" ref={historyRef}>
           <div>
             <strong>Recent pages</strong>
             <button type="button" onClick={() => setHistory([])}>
@@ -435,10 +347,11 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
             .map((url, index) => (
               <button
                 type="button"
+                className="browser-history__entry"
                 key={`${url}-${index}`}
                 onClick={() => {
                   navigate(url)
-                  setHistoryOpen(false)
+                  closeHistory()
                 }}
               >
                 <History size={12} />
@@ -456,32 +369,31 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
         ) : null}
         {pendingElement ? (
           <div className="annotation-layer">
-            <div className="annotation-popover">
+            <div className="annotation-popover" role="dialog" aria-label="Comment on element">
               <div>
                 <MessageCirclePlus size={14} />
                 <strong>Comment on element {count + 1}</strong>
                 <button
                   type="button"
                   aria-label="Discard annotation"
-                  onClick={() => {
-                    setPendingElement(null)
-                    setAnnotationText('')
-                  }}
+                  onClick={() => discardAnnotation()}
                 >
                   <X size={13} />
                 </button>
               </div>
               <textarea
-                autoFocus
+                ref={annotationTextareaRef}
+                data-autofocus
                 value={annotationText}
                 onChange={(event) => setAnnotationText(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key !== 'Enter' || event.shiftKey) return
+                  if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
                   event.preventDefault()
                   if (!annotationText.trim()) return
-                  saveAnnotation()
+                  const send = event.ctrlKey || event.metaKey
+                  saveAnnotation(!send)
                   // Ctrl/Cmd+Enter also fires the composer's send with the saved annotation attached.
-                  if (event.ctrlKey || event.metaKey) annotationsRef.current.requestSend()
+                  if (send) annotationsRef.current.requestSend()
                 }}
                 placeholder="Describe what should change…"
               />
@@ -497,14 +409,11 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
                 <button
                   type="button"
                   className="button"
-                  onClick={() => {
-                    setPendingElement(null)
-                    setAnnotationText('')
-                  }}
+                  onClick={() => discardAnnotation()}
                 >
                   Cancel
                 </button>
-                <button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={saveAnnotation}>
+                <button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={() => saveAnnotation()}>
                   Add comment
                 </button>
               </div>
@@ -522,46 +431,8 @@ export function BrowserPanel({ home, navigationRequest, onNavigationRequestHandl
             {notice}
           </p>
         ) : null}
-        <AgentCursorOverlay pointerEvent={previewPointerEvent} />
       </div>
       </div>
-      {showAgentTab && activeAgentTab ? (
-        <div className="browser-agent-area">
-          <div className="browser-agent-urlbar">
-            <IconButton label="Back" disabled={!activeAgentTab.canGoBack} onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'back')}>
-              <ArrowLeft size={14} />
-            </IconButton>
-            <IconButton label="Forward" disabled={!activeAgentTab.canGoForward} onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'forward')}>
-              <ArrowRight size={14} />
-            </IconButton>
-            <IconButton label="Reload" onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'reload')}>
-              <RefreshCw size={14} />
-            </IconButton>
-            <form
-              className="address-field"
-              onSubmit={(event) => {
-                event.preventDefault()
-                agentAddressEditingRef.current = false
-                onNavigateAgentTab?.(activeAgentTab.tabId, 'url', normalizeUrl(agentAddress))
-              }}
-            >
-              <Bot size={12} aria-hidden />
-              <input
-                value={agentAddress}
-                onChange={(event) => {
-                  agentAddressEditingRef.current = true
-                  setAgentAddress(event.target.value)
-                }}
-                onBlur={() => { agentAddressEditingRef.current = false }}
-                aria-label="Agent tab address"
-                spellCheck={false}
-              />
-            </form>
-            {!activeAgentTab.attached ? <em>connecting…</em> : null}
-          </div>
-          <div className="browser-agent-slot" ref={slotRef} aria-label="Agent-controlled browser tab" />
-        </div>
-      ) : null}
     </div>
   )
 }

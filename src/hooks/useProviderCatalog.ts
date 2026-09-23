@@ -127,6 +127,10 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
     return catalog?.models.find((candidate) => candidate.key === model && candidate.enabled !== false && candidate.available)
   }, [catalog, model])
   const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? DEFAULT_REASONING_LEVELS
+  // Consumers (slider, prompt start) must never observe an effort the selected
+  // model cannot take; state is normalized by the effect below, but this clamp
+  // also covers the render before that effect runs.
+  const effectiveEffort = reasoningLevels.includes(effort) ? effort : reasoningLevels.includes('medium') ? 'medium' : reasoningLevels[0] ?? 'off'
   // Group once per catalog identity so the model picker's option tree can memoize.
   const modelsByProvider = useMemo(() => groupModelsByProvider(catalog?.models), [catalog?.models])
 
@@ -253,7 +257,7 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
       runtime.runtimeId,
       async () => {
         await bridge.agent.command(runtime.runtimeId, { type: 'set_model', provider: nextModel.provider, modelId: nextModel.id })
-        await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
+        if (nextModel.availableThinkingLevels.length) await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
         rememberSelectionRef.current(nextModelKey)
       },
       () => { updateModel(previous.model); updateEffort(previous.effort); updateFast(previous.fast) },
@@ -261,6 +265,12 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
   }, [bridge, catalog?.models, queueRuntimeMutation, rememberSelection, runtime, updateEffort, updateFast, updateModel])
 
   const changeEffort = useCallback((nextEffort: PrimeThinkingLevel) => {
+    // Draft restores and other non-slider callers can carry a level the current
+    // model does not support; resolve levels from the live model ref so a
+    // same-tick model change is already accounted for.
+    const currentModel = catalog?.models.find((candidate) => candidate.key === modelRef.current && candidate.enabled !== false && candidate.available)
+    const levels = currentModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? DEFAULT_REASONING_LEVELS
+    if (!levels.includes(nextEffort)) return
     const previous = effortRef.current
     updateEffort(nextEffort)
     if (!bridge || !runtime) {
@@ -272,7 +282,7 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
       async () => { await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort }) },
       () => updateEffort(previous),
     )
-  }, [bridge, queueRuntimeMutation, runtime, updateEffort])
+  }, [bridge, catalog?.models, queueRuntimeMutation, runtime, updateEffort])
 
   const changeFast = useCallback((enabled: boolean) => {
     const previous = fastRef.current
@@ -356,7 +366,7 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
   }, [authEvent, bridge, reportError])
 
   return {
-    model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels, modelsByProvider,
+    model, effort: effectiveEffort, fast, catalog, authEvent, selectedModel, reasoningLevels, modelsByProvider,
     refresh, changeModel, changeEffort, changeFast,
     saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, setModelEnabled, startOAuth, respondOAuth, cancelOAuth,
   }

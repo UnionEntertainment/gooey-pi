@@ -109,7 +109,8 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onC
       {confirmReset ? (
         <Modal
           title="Clear browser data?"
-          onClose={() => { if (!resetting) setConfirmReset(false) }}
+          onClose={() => setConfirmReset(false)}
+          canClose={() => !resetting}
           footer={(
             <>
               <button type="button" className="button" disabled={resetting} onClick={() => setConfirmReset(false)}>Cancel</button>

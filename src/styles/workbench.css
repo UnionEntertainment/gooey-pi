@@ -18,12 +18,13 @@
 .project-run-split:hover { background: var(--surface-hover); }
 .project-run-split:has(.project-run-split__menu[aria-expanded='true']) { border-color: var(--border); background: var(--surface-selected); }
 .project-run-split.is-running { border-color: var(--border); background: var(--surface-selected); }
-.project-run-split button { display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--text-secondary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
+.project-run-split button { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--text-secondary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
 .project-run-split button:hover { color: var(--text); background: var(--surface-hover); }
-.project-run-split__primary { width: 29px; }
+.project-run-split button::before { content: ''; position: absolute; inset: -5px -1px; }
+.project-run-split__primary { width: 32px; }
 .project-run-split__primary:hover svg { color: var(--success); }
 .project-run-split.is-running .project-run-split__primary svg { color: var(--danger); }
-.project-run-split__menu { width: 21px; border-left: 1px solid transparent; }
+.project-run-split__menu { width: 24px; border-left: 1px solid transparent; }
 .project-run-split:hover .project-run-split__menu, .project-run-split__menu[aria-expanded='true'] { border-left-color: var(--border); }
 .project-run-menu { position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; width: min(360px, calc(100vw - 24px)); display: grid; gap: 13px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); background: var(--surface-raised); box-shadow: var(--shadow-popover); cursor: default; transform-origin: top right; animation: dropdown-in 160ms cubic-bezier(.32,.72,0,1); }
 .project-run-menu > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -32,7 +33,7 @@
 .project-run-menu > label { display: grid; gap: 6px; }
 .project-run-menu > label > span { font-size: 11px; font-weight: 580; }
 .project-run-menu > label > small { color: var(--text-tertiary); font-size: 9.5px; line-height: 1.4; }
-.project-run-menu textarea { width: 100%; min-height: 52px; resize: vertical; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 7px; outline: 0; color: var(--text); background: var(--canvas); font-size: 10.5px; line-height: 1.45; }
+.project-run-menu textarea { width: 100%; min-height: 52px; resize: vertical; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 7px; outline: 0; color: var(--text); background: var(--canvas); font-size: 13px; line-height: 1.45; }
 .project-run-menu textarea:focus { border-color: var(--focus); box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 24%, transparent); }
 .project-run-menu textarea { transition: border-color 140ms ease-out, box-shadow 140ms ease-out; }
 .project-run-menu__status { min-height: 22px; display: inline-flex; align-items: center; gap: 5px; justify-self: start; margin-top: -7px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: var(--surface-subtle); font-size: 9.5px; }
@@ -44,8 +45,13 @@
 .project-run-menu > footer .button { min-height: 28px; font-size: 10.5px; }
 .button--quiet { color: var(--text-secondary); background: transparent; }
 .branch-pill { height: 24px; max-width: 180px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; color: var(--text-secondary); background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.workbench__content { flex: 1; min-height: 0; min-width: 0; }
+.workbench__content { position: relative; flex: 1; min-height: 0; min-width: 0; }
 .session-workspace { display: flex; height: 100%; min-height: 0; min-width: 0; }
+/* Parked keeps the session subtree mounted (terminal PTYs keep running while
+   the user browses other pages) without stealing layout: absolute positioning
+   preserves measurable bounds for panel sizing while visibility removes it
+   from hit-testing, tab order, and the accessibility tree. */
+.session-workspace.is-parked { position: absolute; inset: 0; visibility: hidden; }
 .conversation-column { position: relative; display: flex; min-height: 0; min-width: 0; flex: 1 1 auto; flex-direction: column; }
 .conversation-pane { position: relative; min-width: 360px; min-height: 0; flex: 1 1 auto; background: var(--canvas); overflow: hidden; container-type: inline-size; }
 .conversation-bottom-dock, .transcript-changes-pin, .transcript__inner, .composer-wrap { max-width: var(--transcript-measure); margin: 0 auto; }
@@ -61,6 +67,16 @@
 .resize-handle--vertical > span { inset-block: 0; left: 3px; width: 1px; }
 .resize-handle--horizontal { width: 100%; height: 7px; margin-block: -3px; cursor: row-resize; }
 .resize-handle--horizontal > span { inset-inline: 0; top: 3px; height: 1px; }
+/* The 7px strip is the visual affordance; the pseudo-element widens the real
+   grab target without covering neighbouring controls. */
+.resize-handle::before { content: ''; position: absolute; }
+.resize-handle--vertical::before { inset-block: 0; inset-inline: -5px; }
+.resize-handle--horizontal::before { inset-inline: 0; inset-block: -6px -4px; }
+/* The sidebar handle sits between two interactive edges — session-row actions
+   on the left, terminal text and composer controls on the right. Keep the
+   extra reach small and symmetric so drags that start on content still
+   select/click instead of resizing. */
+.app-shell > .resize-handle--vertical::before { inset-inline: -2px; }
 .resize-handle:hover > span, .resize-handle:focus-visible > span, .resize-handle[data-resizing="true"] > span { background: var(--prime); box-shadow: 0 0 0 1px color-mix(in srgb, var(--prime) 18%, transparent); }
 .resize-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .terminal-drawer > .resize-handle > span { background: var(--terminal-resize); }
@@ -71,13 +87,17 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 .icon-button { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border-radius: 6px; color: var(--text-secondary); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
 .icon-button:hover { color: var(--text); background: var(--surface-hover); }
 .icon-button.is-active { color: var(--text); background: var(--surface-selected); }
+/* Expand the effective hit area beyond the 28px glyph box; the -1px inline
+   inset only covers the 2px gap between adjacent icon buttons. */
+.icon-button::before { content: ''; position: absolute; inset: -6px -1px; }
+.icon-button--small::before { inset: -3px -1px; }
 .icon-button--small { width: 25px; height: 25px; border-radius: 5px; }
 .button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text); background: var(--surface-raised); font-size: 12.5px; font-weight: 520; transition: color 130ms ease-out, background 130ms ease-out, border-color 130ms ease-out, transform 120ms ease-out; }
 .button:hover { background: var(--surface-hover); }
 .button--compact { min-height: 28px; border-radius: 7px; padding-inline: 9px; }
 .button--primary { color: var(--canvas); background: var(--text); border-color: var(--text); }
 .button--primary:hover { color: var(--canvas); background: var(--text-secondary); border-color: var(--text-secondary); }
-.button--danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.button--danger { color: var(--on-danger); background: var(--danger); border-color: var(--danger); }
 .button--danger:hover { background: var(--danger); filter: brightness(.94); }
 .button:not(:disabled):active { transform: scale(.97); }
 

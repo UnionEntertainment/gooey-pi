@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 
 export type PetActivity = 'idle' | 'running-left' | 'running-right' | 'speaking' | 'working' | 'waiting' | 'jumping' | 'failed'
@@ -14,35 +14,72 @@ const ANIMATIONS: Record<PetActivity, { row: number; frameDurations: readonly nu
   working: { row: 8, frameDurations: [150, 150, 150, 150, 150, 280] },
 }
 
+function useMediaReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduced(media.matches)
+    sync()
+    media.addEventListener('change', sync)
+    return () => media.removeEventListener('change', sync)
+  }, [])
+  return reduced
+}
+
 function SpritesheetPet({ dataUrl, activity, size, reduceMotion }: { dataUrl: string; activity: PetActivity; size: number; reduceMotion: boolean }) {
   const animation = ANIMATIONS[activity]
-  const [frame, setFrame] = useState(0)
+  const height = Math.round(size * 208 / 192)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const rootRef = useRef<HTMLSpanElement>(null)
   useEffect(() => {
-    setFrame(0)
+    const image = imageRef.current
+    const root = rootRef.current
+    if (!image || !root) return
+    const applyFrame = (frameIndex: number) => {
+      image.style.transform = `translate(${-frameIndex * size}px, ${-animation.row * height}px)`
+    }
+    applyFrame(0)
     if (reduceMotion || animation.frameDurations.length <= 1) return
     let frameIndex = 0
     let timer = 0
+    let visible = typeof IntersectionObserver === 'undefined'
     const scheduleNextFrame = () => {
       timer = window.setTimeout(() => {
         frameIndex = (frameIndex + 1) % animation.frameDurations.length
-        setFrame(frameIndex)
+        applyFrame(frameIndex)
         scheduleNextFrame()
       }, animation.frameDurations[frameIndex])
     }
-    scheduleNextFrame()
-    return () => window.clearTimeout(timer)
-  }, [activity, animation, reduceMotion])
-  const height = Math.round(size * 208 / 192)
+    const syncTimer = () => {
+      window.clearTimeout(timer)
+      timer = 0
+      if (visible && !document.hidden) scheduleNextFrame()
+    }
+    const observer = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver((entries) => {
+      visible = entries[0]?.isIntersecting ?? true
+      syncTimer()
+    })
+    observer?.observe(root)
+    document.addEventListener('visibilitychange', syncTimer)
+    syncTimer()
+    return () => {
+      window.clearTimeout(timer)
+      observer?.disconnect()
+      document.removeEventListener('visibilitychange', syncTimer)
+    }
+  }, [activity, animation, reduceMotion, size, height])
   return (
-    <span className="pet-sprite" style={{ width: size, height } as CSSProperties} aria-hidden="true">
+    <span ref={rootRef} className="pet-sprite" style={{ width: size, height } as CSSProperties} aria-hidden="true">
       <img
+        ref={imageRef}
         src={dataUrl}
         alt=""
         draggable={false}
         style={{
           width: size * 8,
           height: height * 9,
-          transform: `translate(${-frame * size}px, ${-animation.row * height}px)`,
+          transform: `translate(0px, ${-animation.row * height}px)`,
         }}
       />
     </span>
@@ -72,7 +109,9 @@ export function PetAvatar({ pet, pets, activity = 'idle', size = 92, reduceMotio
     void pets.sprite(pet.id).then((value) => { if (active) setDataUrl(value) }).catch(() => { if (active) setDataUrl(null) })
     return () => { active = false }
   }, [pet.id, pet.kind, pets])
-  if (pet.kind === 'orb') return <OrbPet activity={activity} size={size} reduceMotion={reduceMotion} />
-  if (dataUrl) return <SpritesheetPet dataUrl={dataUrl} activity={activity} size={size} reduceMotion={reduceMotion} />
+  const mediaReducedMotion = useMediaReducedMotion()
+  const reduced = reduceMotion || mediaReducedMotion
+  if (pet.kind === 'orb') return <OrbPet activity={activity} size={size} reduceMotion={reduced} />
+  if (dataUrl) return <SpritesheetPet dataUrl={dataUrl} activity={activity} size={size} reduceMotion={reduced} />
   return <span className="pet-placeholder" style={{ width: size, height: Math.round(size * 208 / 192) }} aria-hidden="true" />
 }

@@ -35,6 +35,8 @@ export interface AppMeta {
   platform: NodeJS.Platform
   homeDir: string
   harnesses: Record<HarnessId, HarnessStatus>
+  /** App-managed working directory for sessions started without a project. */
+  globalWorkspaceDir?: string
 }
 
 export type ApplicationMenuName = 'file' | 'edit' | 'view' | 'window' | 'help'
@@ -466,6 +468,9 @@ export interface TerminalExitEvent { terminalId: string; exitCode: number; signa
 export interface TerminalSelectionContext { tabId: string; label: string; text: string; truncated: boolean }
 export interface TerminalPromptContext extends TerminalSelectionContext { cwd?: string }
 export interface TerminalActiveContext { label: string; content: string; truncated: boolean }
+export interface AgentTerminalOpenRequest { requestId: string; sessionPath: string; cwd: string; command: string; label: string }
+export interface AgentTerminalCloseRequest { requestId: string; id: string; sessionPath: string }
+export interface AgentTerminalResult { ok: boolean; error?: string }
 
 export type MessageEnterAction = 'queue' | 'steer'
 export type PromptDeliveryIntent = 'queue' | 'steer'
@@ -545,7 +550,7 @@ export interface AppSettings {
   telemetry: boolean
   /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
   askUserEnabled: boolean
-  /** Expose GooeyPi's thread-scoped in-app browser controls to new sessions. */
+  /** Expose the separately installed ego lite browser to new sessions through the ego-browser skill. */
   browserEnabled: boolean
   /** Expose the separately installed TryCUA driver to new sessions through its official CLI. */
   computerUseEnabled: boolean
@@ -750,42 +755,6 @@ export interface NativeHeartbeatRecord {
   runtimeId?: string
 }
 
-/** One agent-controlled browser tab. The registry lives in the main process; the renderer hosts the webview guests and mirrors this state. */
-export interface AgentBrowserTabRecord {
-  tabId: string
-  /** Canonical session file path of the thread this tab belongs to. */
-  sessionFile: string
-  url: string
-  title: string
-  /** Whether a live webview guest is currently bound to this tab. */
-  attached: boolean
-  /** Whether this is the session's currently targeted tab. */
-  active: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-}
-
-export interface AgentBrowserState {
-  tabs: AgentBrowserTabRecord[]
-}
-
-/** Emitted for every agent browser action, so the UI can surface the Browser panel while the agent works. */
-export interface AgentBrowserActivityEvent {
-  sessionFile: string
-  tabId: string
-}
-
-/** Emitted when the agent moves the pointer in a tab, so the UI can animate a synthetic cursor along the same path on the same clock. */
-export interface AgentBrowserPointerEvent {
-  tabId: string
-  sessionFile: string
-  /** Previous pointer position, or null when the cursor first appears in a tab. */
-  from: { x: number; y: number } | null
-  to: { x: number; y: number }
-  action: 'move' | 'click' | 'scroll'
-  /** How long the glide takes; 0 means the cursor appears in place. */
-  durationMs: number
-}
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean>; onOpenSettings(callback: () => void): () => void }
@@ -860,6 +829,12 @@ export interface PrimeWorkApi {
     kill(terminalId: string): Promise<boolean>
     onData(callback: (event: TerminalDataEvent) => void): () => void
     onExit(callback: (event: TerminalExitEvent) => void): () => void
+    onAgentOpen(callback: (request: AgentTerminalOpenRequest) => void): () => void
+    onAgentClose(callback: (request: AgentTerminalCloseRequest) => void): () => void
+    reportAgentRequest(requestId: string, result: AgentTerminalResult): void
+    kill(terminalId: string): Promise<boolean>
+    onData(callback: (event: TerminalDataEvent) => void): () => void
+    onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome>; history(cwd: string): Promise<GitHistory>; commitDetail(cwd: string, sha: string): Promise<GitCommitDetail> }
   plugins: {
@@ -876,17 +851,6 @@ export interface PrimeWorkApi {
     listSupabaseProjects(token: string): Promise<{ ref: string; name: string }[]>
   }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
-  browser: {
-    state(): Promise<AgentBrowserState>
-    attachTab(tabId: string, webContentsId: number): Promise<boolean>
-    selectTab(tabId: string): Promise<boolean>
-    closeTab(tabId: string): Promise<boolean>
-    setPreviewContext(webContentsId: number | null, sessionFile: string | null): Promise<boolean>
-    navigateTab(tabId: string, action: 'back' | 'forward' | 'reload' | 'url', url?: string): Promise<boolean>
-    onChanged(callback: (state: AgentBrowserState) => void): () => void
-    onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
-    onActivity(callback: (event: AgentBrowserActivityEvent) => void): () => void
-  }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>
     manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord | null>

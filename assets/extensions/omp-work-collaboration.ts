@@ -74,12 +74,16 @@ export default function (pi: ExtensionApi): void | Promise<void> {
 }
 
 function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
+  // Sessions running in GooeyPi's own workspace are not bound to a project:
+  // their peer set is every session in the harness, not one directory.
+  const globalScope = process.env.GOOEYPI_COLLABORATION_SCOPE === 'global'
+  const scope = globalScope ? 'across all GooeyPi projects' : 'in this working directory'
   const target = Type.String({ description: 'Exact session UUID from an @session reference, Copy session UUID, gooeypi_session_list, or from_session_id in an incoming GooeyPi agent message' })
 
   pi.registerTool({
     name: 'gooeypi_session_list',
     label: 'List sessions',
-    description: 'List other GooeyPi sessions in this working directory. Results include title, UUID, harness, status, and whether the session is live. Use an exact UUID with the other session tools.',
+    description: `List other GooeyPi sessions ${scope}. Results include title, UUID, harness, status, and whether the session is live. Use an exact UUID with the other session tools.`,
     parameters: Type.Object({}),
     async execute() { return result(await call('list')) },
   })
@@ -95,7 +99,7 @@ function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
   pi.registerTool<{ prompt: string; title?: string; model?: string; reasoning?: string; fast?: boolean }>({
     name: 'gooeypi_session_create',
     label: 'Create session',
-    description: 'Create and immediately start a new readable top-level GooeyPi session in this same harness and working directory. Use gooeypi_session_models when selecting a model. Model and reasoning wording may be approximate; GooeyPi resolves and revalidates them against active GUI providers before launch. Set fast true to request fast/priority mode when the selected model and harness support it. The result includes the exact session UUID for gooeypi_session_read, gooeypi_session_send, and gooeypi_session_wait.',
+    description: `Create and immediately start a new readable top-level GooeyPi session in this same harness and ${globalScope ? 'workspace' : 'working directory'}. Use gooeypi_session_models when selecting a model. Model and reasoning wording may be approximate; GooeyPi resolves and revalidates them against active GUI providers before launch. Set fast true to request fast/priority mode when the selected model and harness support it. The result includes the exact session UUID for gooeypi_session_read, gooeypi_session_send, and gooeypi_session_wait.`,
     parameters: Type.Object({
       prompt: Type.String({ minLength: 1, maxLength: 1_000_000, description: 'The self-contained initial task for the new session' }),
       title: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: 'Optional concise session title' })),
@@ -108,14 +112,14 @@ function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
   pi.registerTool<{ target_session_id: string }>({
     name: 'gooeypi_session_read',
     label: 'Read session',
-    description: 'Read bounded recent conversational context from another GooeyPi session in this working directory without modifying its transcript. Includes user, assistant, agent, and thinking text; omits tool calls, tool results, and internal compaction data. Results are capped at 30,000 estimated tokens and report whether truncation occurred.',
+    description: `Read bounded recent conversational context from another GooeyPi session ${scope} without modifying its transcript. Includes user, assistant, agent, and thinking text; omits tool calls, tool results, and internal compaction data. Results are capped at 30,000 estimated tokens and report whether truncation occurred.`,
     parameters: Type.Object({ target_session_id: target }),
     async execute(_id, params) { return result(await call('read', params)) },
   })
   pi.registerTool<{ target_session_id: string; message: string }>({
     name: 'gooeypi_session_send',
     label: 'Message session',
-    description: 'Send an attributed background message to another GooeyPi session in this working directory. For an incoming agent message, reply directly to its from_session_id; its signed reply_with field names this tool, so no session listing is needed. GooeyPi safely wakes an idle saved session when needed. This returns after delivery; call gooeypi_session_wait with cursor_before to wait for its response. Never busy-wait or create mutual waits.',
+    description: `Send an attributed background message to another GooeyPi session ${scope}. For an incoming agent message, reply directly to its from_session_id; its signed reply_with field names this tool, so no session listing is needed. GooeyPi safely wakes an idle saved session when needed. This returns after delivery; call gooeypi_session_wait with cursor_before to wait for its response. Never busy-wait or create mutual waits.`,
     parameters: Type.Object({
       target_session_id: target,
       message: Type.String({ minLength: 1, maxLength: 64 * 1024, description: 'The concise message or coordination request to send' }),

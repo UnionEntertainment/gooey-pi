@@ -1,15 +1,16 @@
 import { ArrowDown, ArrowUp, Bell, CheckCircle2, CircleAlert, Clock3, LayoutGrid, LoaderCircle, Rows3, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type RefObject } from 'react'
 import type { ProjectRecord, SessionRecord, SessionStatus } from '@/types/api'
-import { activityNotificationSignature, signatureCleared } from '@/app/session-attention'
+import { activityNotificationSignature, activitySessionRevision, signatureCleared } from '@/app/session-attention'
 import { formatRelative } from '@/lib/data'
 import { EmptyState, IconButton, Segmented } from '@/components/ui'
+import { useVirtualRows } from '@/hooks/useVirtualRows'
 
 export type ActivityFilter = 'all' | 'attention' | 'running'
 export type ActivityMode = 'table' | 'kanban'
 export const ACTIVITY_BATCH = 250
+const ACTIVITY_ROW_HEIGHT = 53
 const ACTIVITY_MODE_KEY = 'prime-work.activity-mode'
-const ACTIVITY_REVIEWED_KEY = 'prime-work.activity-reviewed'
 
 export interface ActivityViewState {
   filter: ActivityFilter
@@ -29,21 +30,7 @@ function readActivityMode(): ActivityMode {
   return typeof window !== 'undefined' && window.localStorage?.getItem(ACTIVITY_MODE_KEY) === 'kanban' ? 'kanban' : 'table'
 }
 
-function sessionRevision(session: SessionRecord): string {
-  return String(session.eventRevision ?? session.updatedAt)
-}
 
-function readReviewed(): Record<string, string> {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage?.getItem(ACTIVITY_REVIEWED_KEY) ?? '{}')
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const result: Record<string, string> = {}
-    for (const [id, revision] of Object.entries(parsed)) {
-      if (typeof revision === 'string') result[id] = revision
-    }
-    return result
-  } catch { return {} }
-}
 
 function statusLabel(status: SessionStatus): string {
   return status === 'waiting' ? 'Needs attention' : status === 'complete' ? 'Finished' : status
@@ -69,11 +56,13 @@ interface ActivityPageProps {
   sessions: SessionRecord[]
   projects: ProjectRecord[]
   clearedActivity: Record<string, string>
+  reviewedActivity: Record<string, string>
+  onToggleReviewed(session: SessionRecord): void
   onOpen(session: SessionRecord): void
   onClear(sessions: SessionRecord[]): void
 }
 
-export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onClear }: ActivityPageProps) {
+export function ActivityPage({ sessions, projects, clearedActivity, reviewedActivity, onToggleReviewed, onOpen, onClear }: ActivityPageProps) {
   const [viewState, setViewState] = useState<ActivityViewState>({ filter: 'all', query: '', visibleLimit: ACTIVITY_BATCH })
   const [mode, setMode] = useState<ActivityMode>(readActivityMode)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'updated', dir: -1 })
@@ -92,23 +81,12 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
       || filter === 'attention' && (session.unread || session.status === 'waiting' || session.status === 'failed')
       || filter === 'running' && session.status === 'running'
     )
-    return statusMatches && (!normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))
-  }).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)), [clearedActivity, sessions, filter, normalized])
+    const project = projectNames.get(session.projectPath) ?? session.projectPath.split('/').at(-1) ?? ''
+    return statusMatches && (!normalized || `${session.title} ${session.preview ?? ''} ${project}`.toLowerCase().includes(normalized))
+  }).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)), [clearedActivity, sessions, filter, normalized, projectNames])
   const displayed = visible.slice(0, visibleLimit)
   const projectName = (path: string) => projectNames.get(path) ?? path.split('/').at(-1)
-  const [reviewed, setReviewed] = useState<Record<string, string>>(readReviewed)
-  useEffect(() => { try { window.localStorage?.setItem(ACTIVITY_REVIEWED_KEY, JSON.stringify(reviewed)) } catch { /* storage unavailable */ } }, [reviewed])
-  const isReviewed = (session: SessionRecord) => reviewed[session.id] === sessionRevision(session)
-  const toggleReviewed = (session: SessionRecord) => setReviewed((current) => {
-    const next = { ...current }
-    if (next[session.id] === sessionRevision(session)) delete next[session.id]
-    else next[session.id] = sessionRevision(session)
-    return next
-  })
-  const openSession = (session: SessionRecord) => {
-    setReviewed((current) => ({ ...current, [session.id]: sessionRevision(session) }))
-    onOpen(session)
-  }
+  const isReviewed = (session: SessionRecord) => reviewedActivity[session.id] === activitySessionRevision(session)
   const seenDot = (session: SessionRecord) => {
     const checked = isReviewed(session)
     return <button
@@ -117,18 +95,21 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
       aria-label={checked ? `Mark ${session.title} as not reviewed` : `Mark ${session.title} as reviewed`}
       aria-pressed={checked}
       title={checked ? 'Mark as not reviewed' : 'Mark as reviewed'}
-      onClick={(event) => { event.stopPropagation(); toggleReviewed(session) }}
+      onClick={(event) => { event.stopPropagation(); onToggleReviewed(session) }}
     />
   }
 
-  const sorted = useMemo(() => [...displayed].sort((a, b) => {
+  const sorted = useMemo(() => [...visible].sort((a, b) => {
     let result = 0
     if (sort.key === 'updated') result = Date.parse(a.updatedAt) - Date.parse(b.updatedAt)
     else if (sort.key === 'title') result = a.title.localeCompare(b.title)
     else if (sort.key === 'project') result = (projectName(a.projectPath) ?? '').localeCompare(projectName(b.projectPath) ?? '')
     else result = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
     return sort.dir === 1 ? result : -result
-  }), [displayed, sort, projectNames])
+  }), [visible, sort, projectNames])
+  const tableRows = useVirtualRows(sorted.length, ACTIVITY_ROW_HEIGHT)
+  const isFiltered = filter !== 'all' || normalized !== ''
+  const resetActivityFilters = () => setViewState((current) => updateActivityCriteria(current, { filter: 'all', query: '' }))
   const toggleSort = (key: SortKey) => setSort((current) => current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: key === 'updated' ? -1 : 1 })
   const arrow = (key: SortKey) => sort.key === key ? (sort.dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : null
 
@@ -141,7 +122,7 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
     <div className="page-tools page-tools--activity">
       <Segmented value={filter} label="Activity filter" onChange={(value) => setViewState((current) => updateActivityCriteria(current, { filter: value as ActivityFilter }))} options={[{ value: 'all', label: 'All' }, { value: 'attention', label: 'Needs attention' }, { value: 'running', label: 'Running' }]}/>
       <div className="activity-tools__right">
-        <label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter activity"/></label>
+        <label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter by session or project"/></label>
         <div className="activity-mode" role="group" aria-label="Activity layout">
           <IconButton size="small" label="Table view" className={mode === 'table' ? 'is-active' : ''} onClick={() => setMode('table')}><Rows3 size={14} /></IconButton>
           <IconButton size="small" label="Board view" className={mode === 'kanban' ? 'is-active' : ''} onClick={() => setMode('kanban')}><LayoutGrid size={14} /></IconButton>
@@ -149,7 +130,7 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
         <button type="button" className="button button--compact activity-clear-all" disabled={!clearable.length} onClick={() => onClear(clearable)}>Clear all</button>
       </div>
     </div>
-    {displayed.length ? mode === 'table' ? (
+    {visible.length ? mode === 'table' ? (
       <table className="atable">
         <thead>
           <tr>
@@ -161,9 +142,10 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
             <th className="atable__actions" aria-label="Actions" />
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((session) => (
-            <tr key={session.id} className={`atable-row${isReviewed(session) ? ' is-checked' : ''}`} role="button" tabIndex={0} aria-label={`Open ${session.title}`} onClick={() => openSession(session)} onKeyDown={(event) => { if (event.key === 'Enter') openSession(session) }}>
+        <tbody ref={tableRows.listRef as unknown as RefObject<HTMLTableSectionElement>}>
+          {tableRows.paddingTop ? <tr className="atable-spacer"><td colSpan={6} style={{ height: tableRows.paddingTop, padding: 0, border: 0 }} /></tr> : null}
+          {sorted.slice(tableRows.start, tableRows.end).map((session) => (
+            <tr key={session.id} className={`atable-row${isReviewed(session) ? ' is-checked' : ''}`} role="button" tabIndex={0} aria-label={`Open ${session.title}`} onClick={() => onOpen(session)} onKeyDown={(event) => { if (event.target !== event.currentTarget || event.nativeEvent.isComposing) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(session) } }}>
               <td className="atable__seen">{seenDot(session)}</td>
               <td><span className={`atable-status atable-status--${session.status}`}><StatusIcon status={session.status} />{statusLabel(session.status)}</span></td>
               <td className="atable__session">
@@ -175,6 +157,7 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
               <td className="atable__actions">{clearButton(session, 'atable__clear')}</td>
             </tr>
           ))}
+          {tableRows.paddingBottom ? <tr className="atable-spacer"><td colSpan={6} style={{ height: tableRows.paddingBottom, padding: 0, border: 0 }} /></tr> : null}
         </tbody>
       </table>
     ) : (
@@ -190,9 +173,9 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
             <div className="kanban-col__cards">
               {columnSessions.length ? columnSessions.map((session) => (
                 <div className={`kcard${isReviewed(session) ? ' is-checked' : ''}`} key={session.id}>
-                  <button type="button" className="kcard__main" aria-label={`Open ${session.title}`} onClick={() => openSession(session)}>
+                  {seenDot(session)}
+                  <button type="button" className="kcard__main" aria-label={`Open ${session.title}`} onClick={() => onOpen(session)}>
                     <span className="kcard__top">
-                      {seenDot(session)}
                       <span className={`activity-icon activity-icon--${session.status} kcard__icon`}><StatusIcon status={session.status} /></span>
                       <strong className="kcard__title">{session.title}</strong>
                       {session.unread ? <i className="activity-new">New</i> : null}
@@ -211,7 +194,11 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
           </section>
         })}
       </div>
-    ) : <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>}
-    {visible.length > displayed.length ? <button type="button" className="page-show-more" onClick={() => setViewState((current) => growActivityBatch(current, visible.length))}>Show {Math.min(ACTIVITY_BATCH, visible.length - displayed.length)} more sessions</button> : null}
+    ) : isFiltered ? (
+      <EmptyState icon={<Search size={24}/>} title="No matching activity" action={<button type="button" className="button button--compact" onClick={resetActivityFilters}>Clear search and filters</button>}>Nothing matches the current filter or search.</EmptyState>
+    ) : (
+      <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>
+    )}
+    {mode === 'kanban' && visible.length > displayed.length ? <button type="button" className="page-show-more" onClick={() => setViewState((current) => growActivityBatch(current, visible.length))}>Show {Math.min(ACTIVITY_BATCH, visible.length - displayed.length)} more sessions</button> : null}
   </div></div>
 }

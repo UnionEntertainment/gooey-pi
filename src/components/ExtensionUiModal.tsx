@@ -163,7 +163,10 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
       return
     }
     if (questionIndex === questionnaire.questions.length) {
-      if (event.key === 'Enter') {
+      // On the summary step Enter must not hijack the progress buttons: a
+      // focused button activates natively (navigating back to a question),
+      // while Enter anywhere else submits.
+      if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
         event.preventDefault()
         submitQuestionnaire()
       }
@@ -177,6 +180,11 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
       return
     }
     if (event.key === 'Enter') {
+      // Buttons keep native activation: Enter on an option commits that
+      // option via its click handler, and Enter on a progress button
+      // navigates. Only the context field and other non-button targets take
+      // the commit shortcut.
+      if (event.target instanceof HTMLButtonElement) return
       event.preventDefault()
       commitQuestion()
       return
@@ -295,8 +303,8 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
         </div>
       ) : null}
       {request.method === 'confirm' ? <p className="modal-intro extension-question__message">{request.message}</p> : null}
-      {request.method === 'input' ? <label className="field extension-question__field"><span>Response</span><input autoFocus value={value} placeholder={request.placeholder} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && value.trim()) { event.preventDefault(); onRespond({ value }) } }} /></label> : null}
-      {request.method === 'editor' ? <label className="field extension-question__field"><span>Response</span><textarea autoFocus rows={7} value={value} onChange={(event) => setValue(event.target.value)} /></label> : null}
+      {request.method === 'input' ? <label className="field extension-question__field"><span>Response</span><input data-autofocus value={value} placeholder={request.placeholder} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && value.trim()) { event.preventDefault(); onRespond({ value }) } }} /></label> : null}
+      {request.method === 'editor' ? <label className="field extension-question__field"><span>Response</span><textarea data-autofocus rows={7} value={value} onChange={(event) => setValue(event.target.value)} /></label> : null}
     </Modal>
   )
 }

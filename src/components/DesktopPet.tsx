@@ -5,7 +5,7 @@ import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 import { PetAvatar, type PetActivity } from './PetAvatar'
 
 interface Position { x: number; y: number }
-interface DragState { pointerId: number; dx: number; dy: number; lastX: number; lastY: number; moved: boolean }
+interface DragState { pointerId: number; startX: number; startY: number; baseX: number; baseY: number; lastX: number; lastY: number; moved: boolean }
 
 const BUILT_INS: PetDefinition[] = [
   { id: 'orb', petId: 'orb', displayName: 'Orb', description: 'A fluid voice orb that shifts with GooeyPi activity.', source: 'built-in', kind: 'orb' },
@@ -65,6 +65,8 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   const voiceControlRef = useRef<HTMLButtonElement>(null)
   const dismissTargetRef = useRef<HTMLSpanElement>(null)
   const metricsRef = useRef({ width: surfaceWidth, idleHeight: initialSurfaceHeight })
+  const dismissBoundsRef = useRef<DOMRect | null>(null)
+  const dragFrameRef = useRef(0)
   const hasVoiceDetails = Boolean(voiceError || children)
 
   useEffect(() => {
@@ -113,6 +115,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     const timer = window.setTimeout(() => setJumping(false), reduceMotion ? 80 : 700)
     return () => window.clearTimeout(timer)
   }, [jumping, reduceMotion])
+  useEffect(() => () => window.cancelAnimationFrame(dragFrameRef.current), [])
 
   const pet = useMemo(() => available.find((item) => item.id === petId) ?? available.find((item) => item.id === 'orb') ?? BUILT_INS[0], [available, petId])
   const activity: PetActivity = dragging
@@ -124,12 +127,13 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
-    dragRef.current = { pointerId: event.pointerId, dx: event.clientX - position.x, dy: event.clientY - position.y, lastX: event.clientX, lastY: event.clientY, moved: false }
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: positionRef.current.x, baseY: positionRef.current.y, lastX: event.clientX, lastY: event.clientY, moved: false }
+    dismissBoundsRef.current = onDismiss ? dismissTargetRef.current?.getBoundingClientRect() ?? null : null
     setDismissArmed(false)
     setDragging(true)
   }
   const isOverDismissTarget = (clientX: number, clientY: number) => {
-    const bounds = dismissTargetRef.current?.getBoundingClientRect()
+    const bounds = dismissBoundsRef.current
     if (!bounds || bounds.width === 0 || bounds.height === 0) return false
     const radius = Math.min(bounds.width, bounds.height) / 2 + 12
     const dx = clientX - (bounds.left + bounds.width / 2)
@@ -140,28 +144,47 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     const deltaX = event.clientX - drag.lastX
-    const deltaY = event.clientY - drag.lastY
     if (Math.abs(deltaX) > 1) setDirection(deltaX < 0 ? 'left' : 'right')
     drag.lastX = event.clientX
     drag.lastY = event.clientY
-    drag.moved ||= Math.abs(deltaX) + Math.abs(deltaY) > 2
+    drag.moved ||= Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) > 2
     setDismissArmed(isOverDismissTarget(event.clientX, event.clientY))
-    const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, surfaceHeight, surfaceWidth)
+    const next = constrained({ x: drag.baseX + event.clientX - drag.startX, y: drag.baseY + event.clientY - drag.startY }, surfaceHeight, surfaceWidth)
     positionRef.current = next
-    setPosition(next)
+    if (dragFrameRef.current) return
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = 0
+      const surface = surfaceRef.current
+      const dragState = dragRef.current
+      if (!surface || !dragState) return
+      surface.style.transform = `translate(${positionRef.current.x - dragState.baseX}px, ${positionRef.current.y - dragState.baseY}px)`
+    })
   }
   const finishDrag = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     dragRef.current = null
+    if (dragFrameRef.current) {
+      window.cancelAnimationFrame(dragFrameRef.current)
+      dragFrameRef.current = 0
+    }
     setDragging(false)
     const shouldDismiss = !cancelled && onDismiss && isOverDismissTarget(event.clientX, event.clientY)
+    dismissBoundsRef.current = null
     setDismissArmed(false)
+    const surface = surfaceRef.current
+    const next = positionRef.current
+    if (surface) {
+      surface.style.transform = ''
+      surface.style.left = `${next.x}px`
+      surface.style.top = `${next.y}px`
+    }
+    setPosition(next)
     if (shouldDismiss) {
       onDismiss()
       return
     }
-    window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(positionRef.current))
+    window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(next))
     if (!drag.moved) setJumping(true)
   }
   const moveByKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {

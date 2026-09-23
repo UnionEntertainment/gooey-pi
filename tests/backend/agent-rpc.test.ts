@@ -614,7 +614,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   it('releases a minted environment when admission fails before a runtime exists', async () => {
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
     const manager = managerFor(fake.executable)
-    const environment = { PRIME_WORK_BROWSER_TOKEN: 'never-spawned-token' }
+    const environment = { PRIME_WORK_TERMINAL_TOKEN: 'never-spawned-token' }
     const ended = vi.fn()
     manager.setRuntimeEnvironmentProvider(() => {
       manager.beginShutdown()
@@ -665,7 +665,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 `)
     chmodSync(executable, 0o755)
     const manager = managerFor(executable)
-    const environment = { PRIME_WORK_BROWSER_TOKEN: 'natural-exit-token' }
+    const environment = { PRIME_WORK_TERMINAL_TOKEN: 'natural-exit-token' }
     const ended = vi.fn()
     manager.setRuntimeEnvironmentProvider(() => environment)
     manager.setRuntimeEndListener(ended)
@@ -803,6 +803,24 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     await expect(manager.command(runtime.runtimeId, {
       type: 'prompt', message: 'inspect', images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }],
     })).rejects.toThrow('active model does not accept images')
+  })
+
+  it('rejects a thinking level the runtime model does not support', async () => {
+    const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'session-1', isStreaming: false, model: { provider: 'fixture', id: 'text-model', name: 'Text model' } } }"
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)
+    const providers = {
+      capabilities: async () => ({
+        key: 'fixture/text-model', provider: 'fixture', id: 'text-model', name: 'Text model', reasoning: false,
+        input: ['text'], contextWindow: 1_000, maxTokens: 100, availableThinkingLevels: ['off'], fastModeSupported: false, available: true,
+      }),
+      requireAvailableModel: async () => { throw new Error('not used') },
+    } as unknown as PrimeProviderService
+    const manager = new AgentRpcManager(fake.executable, async (cwd) => cwd, async (path) => path, providers)
+    managers.push(manager)
+    const runtime = await manager.start({ cwd: fake.cwd })
+
+    await expect(manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: 'high' }))
+      .rejects.toThrow('Text model does not support high reasoning')
   })
 
   it('terminates a process group that keeps writing after an oversized frame', async () => {

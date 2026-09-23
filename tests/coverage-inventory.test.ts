@@ -22,7 +22,7 @@ const VITEST_ENTRYPOINT = resolve(PROJECT_ROOT, 'node_modules/vitest/vitest.mjs'
 const REQUIRED_SAFETY_MODULES = [
   'electron/main/ipc.ts',
   'electron/main/lib/capability-bridge.ts',
-  'electron/main/browser/agent-bridge.ts',
+  'electron/main/terminal-bridge.ts',
   'electron/main/collaboration/agent-bridge.ts',
   'electron/main/collaboration/message-envelope.ts',
   'electron/main/schedules/agent-bridge.ts',
@@ -93,11 +93,10 @@ describe('safety-critical coverage inventory', () => {
     const shippedExtensions = inventory.includedFiles.filter((file) => file.startsWith('assets/extensions/'))
     expect(shippedExtensions).toEqual([
       'assets/extensions/omp-work-ask-user.ts',
-      'assets/extensions/omp-work-browser.ts',
       'assets/extensions/omp-work-collaboration.ts',
       'assets/extensions/omp-work-schedules.ts',
+      'assets/extensions/omp-work-terminal.ts',
       'assets/extensions/pi-work-fast-mode.ts',
-      'assets/extensions/prime-work-browser.ts',
     ])
 
     const projectRoot = mkdtempSync(join(tmpdir(), 'gooeypi-coverage-inventory-'))

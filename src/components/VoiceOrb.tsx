@@ -67,6 +67,7 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
   const [taskOpened, setTaskOpened] = useState(false)
   const [position, setPosition] = useState(initialPosition)
   const streamRef = useRef<MediaStream | null>(null)
+  const mutedRef = useRef(false)
   const channelRef = useRef<RTCDataChannel | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
@@ -78,6 +79,7 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
     const isVisible = Boolean(pet)
     petVisibleRef.current = isVisible
     if (wasVisible || !isVisible) return
+    mutedRef.current = true
     setMuted(true)
     for (const track of streamRef.current?.getAudioTracks() ?? []) track.enabled = false
     setOrbState((current) => current === 'error' ? current : 'listening')
@@ -205,7 +207,10 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
         if (!active) { for (const track of stream.getTracks()) track.stop(); return }
         streamRef.current = stream
-        for (const track of stream.getTracks()) peer.addTrack(track, stream)
+        for (const track of stream.getTracks()) {
+          track.enabled = !mutedRef.current
+          peer.addTrack(track, stream)
+        }
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
         const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '', harness: harnessRef.current })
@@ -231,6 +236,7 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
 
   const toggleMute = () => {
     const next = !muted
+    mutedRef.current = next
     setMuted(next)
     for (const track of streamRef.current?.getAudioTracks() ?? []) track.enabled = !next
     if (next) setOrbState('listening')

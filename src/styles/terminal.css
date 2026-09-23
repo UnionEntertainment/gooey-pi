@@ -10,7 +10,8 @@
 .terminal-tab { height: 29px; display: flex; align-items: center; flex: 0 0 auto; border-radius: 6px; color: var(--terminal-control); background: transparent; transition: color 130ms ease-out, background 130ms ease-out; }
 .terminal-tab > [role="tab"] { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 5px 0 8px; color: inherit; background: transparent; font-size: 11px; }
 .terminal-tab.is-active { color: var(--terminal-control-active); background: var(--terminal-control-bg); }
-.terminal-tab__close { width: 20px; height: 20px; display: grid; place-items: center; margin-right: 3px; border-radius: 4px; color: inherit; background: transparent; opacity: 0; transition: opacity 130ms ease-out, background 130ms ease-out; }
+.terminal-tab__close { position: relative; width: 20px; height: 20px; display: grid; place-items: center; margin-right: 3px; border-radius: 4px; color: inherit; background: transparent; opacity: 0; transition: opacity 130ms ease-out, background 130ms ease-out; }
+.terminal-tab__close::before { position: absolute; inset: -4px -1px; content: ""; }
 .terminal-tab:hover .terminal-tab__close, .terminal-tab:focus-within .terminal-tab__close, .terminal-tab.is-active .terminal-tab__close { opacity: .7; }
 .terminal-tab__close:hover { background: var(--terminal-control-hover); opacity: 1; }
 .terminal-live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--terminal-control); transition: background 200ms ease-out; }

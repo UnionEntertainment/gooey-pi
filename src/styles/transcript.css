@@ -1,8 +1,14 @@
 /* Transcript */
-.transcript { position: absolute; inset: 0; overflow-y: auto; padding: 30px 0 170px; }
+/* scroll-behavior:auto beats the .scroll-area smooth default: the follow-tail
+   scrollTo calls pass behavior:'auto', which resolves to the CSS value and
+   would retarget a smooth animation on every streaming update.
+   --annotation is re-scoped darker for the light theme: the shared #2488ff is
+   3.48:1 on the canvas, under 4.5:1 for the 11-14px text it colors here. */
+.transcript { position: absolute; inset: 0; overflow-y: auto; padding: 30px 0 170px; scroll-behavior: auto; --annotation: #0b62d6; }
 .transcript.has-pinned-changes { padding-bottom: 215px; }
 .transcript.has-docked-changes { padding-bottom: 220px; }
 .transcript.has-queued-messages { padding-bottom: 325px; }
+:root[data-theme="dark"] .transcript { --annotation: #63aaff; }
 .transcript.has-docked-changes.has-queued-messages { padding-bottom: 375px; }
 .transcript-changes-pin { z-index: 9; bottom: 137px; animation: popover-in 180ms cubic-bezier(.32,.72,0,1); }
 .conversation-pane .changes-card { box-shadow: 0 3px 14px color-mix(in srgb, #000 11%, transparent); }
@@ -16,7 +22,10 @@
 .prompt-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 22px; }
 .prompt-suggestions button { min-height: 31px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--surface-raised); transition: color 130ms ease-out, background 130ms ease-out, border-color 130ms ease-out; }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
-.message { width: 100%; margin-bottom: 26px; }
+/* content-visibility lets "Show earlier" keep every revealed batch mounted
+   without paying layout/paint for offscreen messages; the intrinsic height is
+   a scroll-size estimate until a block has rendered once. */
+.message { width: 100%; margin-bottom: 26px; content-visibility: auto; contain-intrinsic-height: auto 140px; }
 .message--user { display: flex; flex-direction: column; align-items: flex-end; padding-left: 14%; }
 .message__steer-state { margin-top: 5px; color: var(--text-tertiary); font-size: 11px; }
 .message__steer-state.is-read { color: var(--success); }
@@ -69,7 +78,7 @@
 .work-disclosure__status .thinking-dots { min-width: 29px; }
 /* Live elapsed clock on running work rows: tabular digits keep the 1-second
    updates from shifting the adjacent dots around. */
-.live-elapsed { font-variant-numeric: tabular-nums; opacity: 0.78; }
+.live-elapsed { min-width: 10ch; font-variant-numeric: tabular-nums; opacity: 0.78; }
 .work-timeline { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 8px 5px; }
 .work-disclosure.is-running .work-timeline { padding: 0 0 8px; }
 .work-disclosure.is-running .activity-line--reasoning { color: var(--text-tertiary); font-size: 12.5px; line-height: 1.55; }
@@ -106,7 +115,7 @@
 .activity-line.is-error .activity-tool__state { color: var(--danger); }
 .activity-tool__details { max-height: 230px; margin: 0 5px 6px 30px; overflow: auto; border-left: 2px solid var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 10.5px; line-height: 1.5; animation: reveal-in 150ms ease-out; }
 .activity-tool__details-toolbar { display: flex; justify-content: flex-end; padding: 3px 4px 0; }
-.activity-tool__copy { min-height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; transition: color 130ms ease-out, background 130ms ease-out; }
+.activity-tool__copy { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; transition: color 130ms ease-out, background 130ms ease-out; }
 .activity-tool__copy:hover { color: var(--text-secondary); background: var(--surface-hover); }
 .activity-tool__contents { margin: 0; padding: 4px 9px 7px; white-space: pre-wrap; word-break: break-word; }
 .activity-line--result { display: flex; align-items: flex-start; gap: 5px; padding: 4px 5px; color: var(--text-tertiary); }
@@ -120,12 +129,13 @@
 .image-part__preview { display: block; max-width: min(100%, 420px); margin: 7px 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--canvas); line-height: 0; cursor: zoom-in; transition: border-color 140ms ease-out, box-shadow 140ms ease-out; }
 .image-part__preview:hover { border-color: var(--border-strong); box-shadow: 0 3px 14px color-mix(in srgb, #000 12%, transparent); }
 .image-part__preview:focus-visible { outline: 2px solid var(--annotation); outline-offset: 3px; }
-.image-part { display: block; max-width: 100%; max-height: 320px; margin: 0; object-fit: contain; }
+.image-part { display: block; width: auto; height: auto; max-width: 100%; max-height: 320px; margin: 0; object-fit: contain; }
 .image-part--unavailable { max-width: min(100%, 420px); margin: 7px 0; padding: 20px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-tertiary); text-align: center; }
 .image-lightbox { position: fixed; z-index: 240; inset: 0; display: flex; align-items: center; justify-content: center; padding: 32px; overflow: auto; background: color-mix(in srgb, #090909 78%, transparent); backdrop-filter: blur(5px); animation: fade-in 130ms ease-out; }
 .image-lightbox__panel { position: relative; display: flex; max-width: 100%; max-height: 100%; align-items: center; justify-content: center; outline: none; }
 .image-lightbox__image { display: block; width: auto; height: auto; max-width: calc(100vw - 64px); max-height: calc(100vh - 64px); border-radius: 6px; box-shadow: 0 18px 60px rgba(0,0,0,.48); object-fit: contain; animation: modal-in 160ms ease-out; }
-.image-lightbox__close { position: absolute; z-index: 1; top: 9px; right: 9px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; color: #fff; background: rgba(10,10,10,.68); box-shadow: 0 2px 8px rgba(0,0,0,.28); backdrop-filter: blur(6px); transition: background 130ms ease-out; }
+.image-lightbox__close { position: absolute; z-index: 1; top: 9px; right: 9px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; color: #fff; background: rgba(10,10,10,.68); box-shadow: 0 2px 8px rgba(0,0,0,.28); backdrop-filter: blur(6px); transition: background 130ms ease-out; }
+.image-lightbox__close::before { content: ""; position: absolute; inset: -4px; }
 .image-lightbox__close:hover, .image-lightbox__close:focus-visible { background: rgba(10,10,10,.9); }
 .image-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .message--activity { margin: 3px 0 18px 38px; }
@@ -152,7 +162,7 @@
 @keyframes thinking-dot { 0%, 62%, 100% { transform: translateY(1px) scale(.72); opacity: .3; } 31% { transform: translateY(-4px) scale(1); opacity: 1; box-shadow: 0 4px 8px color-mix(in srgb, var(--prime) 24%, transparent); } }
 .message-actions { min-height: 26px; display: flex; align-items: center; gap: 4px; margin-top: 5px; opacity: 0; transition: opacity 130ms ease-out; }
 .message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
-.message-actions button, .message-actions span { min-height: 23px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; transition: color 130ms ease-out, background 130ms ease-out; }
+.message-actions button, .message-actions span { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; transition: color 130ms ease-out, background 130ms ease-out; }
 .message-actions button:hover { color: var(--text-secondary); background: var(--surface-hover); }
 .message-actions span { margin-left: auto; }
 .message--user .message-actions { justify-content: flex-end; }

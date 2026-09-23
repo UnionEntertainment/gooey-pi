@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { OmpExtensionApi as BrowserExtensionApi } from '../../assets/extensions/omp-work-browser'
+import type { OmpExtensionApi as TerminalExtensionApi } from '../../assets/extensions/omp-work-terminal'
 import type { OmpExtensionApi as ScheduleExtensionApi } from '../../assets/extensions/omp-work-schedules'
 import type { OmpExtensionApi as AskUserExtensionApi } from '../../assets/extensions/omp-work-ask-user'
 import type { OmpExtensionApi as CollaborationExtensionApi } from '../../assets/extensions/omp-work-collaboration'
@@ -44,11 +44,11 @@ afterEach(() => {
   vi.resetModules()
 })
 
-async function loadBrowserExtension() {
+async function loadTerminalExtension() {
   vi.resetModules()
-  vi.stubEnv('PRIME_WORK_BROWSER_URL', 'http://127.0.0.1:1/')
-  vi.stubEnv('PRIME_WORK_BROWSER_TOKEN', 'token')
-  return (await import('../../assets/extensions/omp-work-browser')).default
+  vi.stubEnv('PRIME_WORK_TERMINAL_URL', 'http://127.0.0.1:1/')
+  vi.stubEnv('PRIME_WORK_TERMINAL_TOKEN', 'token')
+  return (await import('../../assets/extensions/omp-work-terminal')).default
 }
 
 async function loadScheduleExtension() {
@@ -59,47 +59,28 @@ async function loadScheduleExtension() {
 }
 
 describe('extensions on a base pi host (no injected pi.typebox)', () => {
-  it('browser extension registers the full tool surface with host-resolved schemas', async () => {
-    const factory = await loadBrowserExtension()
+  it('terminal extension registers the terminal tools with host-resolved schemas', async () => {
+    const factory = await loadTerminalExtension()
     const { tools, pi } = piHost()
-    await factory(pi as unknown as BrowserExtensionApi)
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'terminal_read',
-      'browser_tabs',
-      'browser_navigate',
-      'browser_screenshot',
-      'browser_read_page',
-      'browser_click',
-      'browser_type',
-      'browser_press_key',
-      'browser_scroll',
-      'browser_evaluate',
-    ])
-    const tabs = schemaOf(tools.find((tool) => tool.name === 'browser_tabs')!)
-    expect(tabs.type).toBe('object')
-    expect(tabs.required).toEqual(['action'])
-    expect(tabs.properties.action.enum).toEqual(['list', 'open', 'close', 'select'])
-    expect(tabs.properties.action.type).toBe('string')
-    const click = schemaOf(tools.find((tool) => tool.name === 'browser_click')!)
-    expect(click.required ?? []).toEqual([])
-    expect(click.properties.ref.type).toBe('number')
-    expect(click.properties.double.type).toBe('boolean')
-    const type = schemaOf(tools.find((tool) => tool.name === 'browser_type')!)
-    expect(type.required).toEqual(['text'])
-    const pressKey = schemaOf(tools.find((tool) => tool.name === 'browser_press_key')!)
-    expect(pressKey.properties.modifiers.type).toBe('array')
-    expect(pressKey.properties.modifiers.items.enum).toEqual(['shift', 'control', 'alt', 'meta'])
+    await factory(pi as unknown as TerminalExtensionApi)
+    expect(tools.map((tool) => tool.name)).toEqual(['terminal_read', 'terminal_open', 'terminal_stop'])
+    const schema = schemaOf(tools[0])
+    expect(schema.type).toBe('object')
+    expect(schema.required ?? []).toEqual([])
+    const openSchema = schemaOf(tools[1])
+    expect(openSchema.required ?? []).toEqual(['command'])
   })
 
-  it('browser extension still registers nothing without the broker environment', async () => {
+  it('terminal extension still registers nothing without the broker environment', async () => {
     vi.resetModules()
-    vi.stubEnv('PRIME_WORK_BROWSER_URL', undefined as unknown as string)
-    vi.stubEnv('PRIME_WORK_BROWSER_TOKEN', undefined as unknown as string)
-    const factory = (await import('../../assets/extensions/omp-work-browser')).default
+    vi.stubEnv('PRIME_WORK_TERMINAL_URL', undefined as unknown as string)
+    vi.stubEnv('PRIME_WORK_TERMINAL_TOKEN', undefined as unknown as string)
+    const factory = (await import('../../assets/extensions/omp-work-terminal')).default
     const { tools, pi } = piHost()
-    await factory(pi as unknown as BrowserExtensionApi)
+    await factory(pi as unknown as TerminalExtensionApi)
     expect(tools).toHaveLength(0)
   })
+
 
   it('schedules extension registers the full tool surface with host-resolved schemas', async () => {
     const factory = await loadScheduleExtension()
